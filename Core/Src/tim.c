@@ -21,6 +21,7 @@
 #include "tim.h"
 
 /* USER CODE BEGIN 0 */
+/* cubemx generation error */
 #define tim_ocHandle (&htim5)
 /* USER CODE END 0 */
 

@@ -105,7 +105,6 @@ int main(void)
   MX_TIM15_Init();
   /* USER CODE BEGIN 2 */
 
-  HAL_TIM_Base_Start_IT(&htim16);
   ESC_Init();
   esc_ready = 1;
 

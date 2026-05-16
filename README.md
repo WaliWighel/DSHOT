@@ -1,64 +1,84 @@
-# DSHOT
-driver for DMA-based DSHOT600 motor control
+# DSHOT600 Motor Control Driver
 
-# INIT
+A DMA-based DSHOT600 motor control driver for STM32 microcontrollers with DMA-accelerated signal generation and optional telemetry support.
 
-Call : 
-ESC_Init();
-to init ESC, this arms ESC and gets it ready for flight. Time for init can difer, so you can change in this function :
+## Features
 
-	/* Allow ESC power supply to stabilize */
-	HAL_Delay(4000);
+- **DMA-based DSHOT600**: Efficient motor control using DMA for signal generation
+- **Bi-directional support**: Optional telemetry feedback from ESCs
+- **Multi-motor support**: Simultaneous control of up to 4 motors
+- **Simple API**: Straightforward initialization and control functions
 
-  and, during this one, your ESC have to emit one low tone bip and one hight tone bip, to tell you that it is ready.
+## Quick Start
 
-  	/* Send 40000 zero-throttle pulses for ESC calibration (~5 seconds @ 8kHz) */
-	for (uint32_t i = 0; i < 40000; i ++) {
-		ESC_EngineSetSpeedForAll();
+### Initialization
 
-		/* Synchronize to 8kHz tick from TIM16 */
-		while (flag == 0);
-		flag = 0;
-	}
+Call `ESC_Init()` to initialize the ESC. This function:
+1. Powers up the ESC and waits for stabilization (default: 4 seconds)
+2. Sends calibration pulses (zero-throttle, ~5 seconds @ 8kHz)
+3. Waits for ESC confirmation beeps (low tone, then high tone)
 
-# MAIN LOOP
+You can adjust the stabilization delay in the init function:
+```c
+/* Allow ESC power supply to stabilize */
+HAL_Delay(4000);
+```
 
-You need to send signal sonstantly to your ESC, if you don't, it will think that something is wrong and will go off. So for example you can do it as i have done it, in irq handler from timer. 
-My timer is trigered at 8kHz, only important think is thai it have to same timing as for init function : 
+### Main Loop
 
-    void HAL_TIM_PeriodElapsedCallback (TIM_HandleTypeDef *htim) {
-  	  if (htim == &htim16) {
-  		  if (esc_ready) {
-  			  ESC_EngineSetSpeedForAll(); // for operation
-  		  } else {
-  			  ESC_SetFlagForInit(); // for init function
-  		  }
-  	  }
+You must send DSHOT signals continuously to your ESC at a consistent rate. Failure to do so will cause the ESC to shut down as a safety measure.
+
+**Recommended approach**: Use a timer interrupt (e.g., 8kHz timer):
+
+```c
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
+    if (htim == &htim16) {
+        if (esc_ready) {
+            ESC_EngineSetSpeedForAll();  // Normal operation
+        } else {
+            ESC_SetFlagForInit();         // Initialization sequence
+        }
     }
+}
+```
 
-# TELEMETRY 
+**Important**: Keep the timer frequency consistent with the initialization rate (8kHz in this example).
 
-It is posible to get telemetry packets from your ESC. You have to send telemetry bit in your dshot frame. You can do it via, where 1 as a second argument is telemetry bit. : 
+### Throttle Control
 
-    ESC_EngineUpdateDMABuff(Throttle_all, 1);
+Set motor speeds using `ESC_EngineUpdateDMABuff()`:
+```c
+ESC_EngineUpdateDMABuff(throttle_value, telemetry_bit);
+```
 
-Code will handle everything for you, you will see you telemetry data in :
+### Telemetry (Optional)
 
-     /* Main ESC status structure containing telemetry data for all 4 motors */
-    ESC_Status_t ESC;
+To receive telemetry feedback from your ESC:
 
-One importan thing is that you have to connect telemetry pin to UART RX pin to your MPU, and add this in you uart rx handler : 
+1. Connect the ESC telemetry pin to your microcontroller's UART RX pin
+2. Set the telemetry bit to 1 when sending commands:
+   ```c
+   ESC_EngineUpdateDMABuff(throttle_value, 1);  // Request telemetry
+   ```
+3. Add a UART RX interrupt handler:
+   ```c
+   void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
+       if (huart == &huart1) {
+           HAL_UART_AbortReceive(huart);
+           ESC_TelemetryHandling(EVENT_USART_RX);
+       }
+   }
+   ```
+4. Access telemetry data from the global structure:
+   ```c
+   ESC_Status_t ESC;  // Contains telemetry data for all 4 motors
+   ```
 
-    void HAL_UART_RxCpltCallback (UART_HandleTypeDef *huart) {
-    	if (huart == &huart1) {
-    		HAL_UART_AbortReceive(huart);
-    		ESC_TelemetryHandling(EVENT_USART_RX);
-    	}
-    }
+## References
 
-# MORE ABOUT DSHOT 
+- [DSHOT Protocol Overview](https://brushlesswhoop.com/dshot-and-bidirectional-dshot/)
+- [STM32 HAL DSHOT Reference Implementation](https://github.com/mokhwasomssi/stm32_hal_dshot/tree/main)
 
-Great sorces for more about dshot : 
+## License
 
-https://brushlesswhoop.com/dshot-and-bidirectional-dshot/
-https://github.com/mokhwasomssi/stm32_hal_dshot/tree/main
+[Add your license here if applicable]

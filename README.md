@@ -65,7 +65,6 @@ To receive telemetry feedback from your ESC:
    ```c
    void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
        if (huart == &huart1) {
-           HAL_UART_AbortReceive(huart);
            ESC_TelemetryHandling(EVENT_USART_RX);
        }
    }

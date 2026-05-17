@@ -18,7 +18,6 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
-#include "adc.h"
 #include "gpdma.h"
 #include "sbs.h"
 #include "tim.h"
@@ -36,6 +35,7 @@
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
+/* USER CODE BEGIN PD */
 
 /* USER CODE END PD */
 
@@ -101,8 +101,6 @@ int main(void)
   MX_SBS_Init();
   MX_TIM16_Init();
   MX_USART1_UART_Init();
-  MX_ADC1_Init();
-  MX_TIM15_Init();
   /* USER CODE BEGIN 2 */
 
   ESC_Init();
@@ -118,8 +116,6 @@ int main(void)
 	  Throttle_all[1] = Throttle_all[0];
 	  Throttle_all[2] = Throttle_all[0];
 	  Throttle_all[3] = Throttle_all[0];
-
-	  ESC_EngineUpdateDMABuff(Throttle_all, 1);
 
 	  HAL_Delay(100);
 
@@ -161,16 +157,7 @@ void SystemClock_Config(void)
   RCC_OscInitStruct.PLL1.PLLS = 2;
   RCC_OscInitStruct.PLL1.PLLT = 2;
   RCC_OscInitStruct.PLL1.PLLFractional = 0;
-  RCC_OscInitStruct.PLL2.PLLState = RCC_PLL_ON;
-  RCC_OscInitStruct.PLL2.PLLSource = RCC_PLLSOURCE_HSE;
-  RCC_OscInitStruct.PLL2.PLLM = 32;
-  RCC_OscInitStruct.PLL2.PLLN = 256;
-  RCC_OscInitStruct.PLL2.PLLP = 2;
-  RCC_OscInitStruct.PLL2.PLLQ = 2;
-  RCC_OscInitStruct.PLL2.PLLR = 2;
-  RCC_OscInitStruct.PLL2.PLLS = 2;
-  RCC_OscInitStruct.PLL2.PLLT = 2;
-  RCC_OscInitStruct.PLL2.PLLFractional = 0;
+  RCC_OscInitStruct.PLL2.PLLState = RCC_PLL_NONE;
   RCC_OscInitStruct.PLL3.PLLState = RCC_PLL_NONE;
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
   {
@@ -200,7 +187,7 @@ void SystemClock_Config(void)
 void HAL_TIM_PeriodElapsedCallback (TIM_HandleTypeDef *htim) {
 	if (htim == &htim16) {
 		if (esc_ready) {
-			ESC_EngineSetSpeedForAll();
+			ESC_EngineSetSpeedForAll(Throttle_all, 1);
 		} else {
 			ESC_SetFlagForInit();
 		}

@@ -5,7 +5,7 @@ A DMA-based DSHOT600 motor control driver for STM32 microcontrollers with DMA-ac
 ## Features
 
 - **DMA-based DSHOT600**: Efficient motor control using DMA for signal generation
-- **Bi-directional support**: Optional telemetry feedback from ESCs
+- **Telemetry support**: Optional telemetry feedback from ESCs
 - **Multi-motor support**: Simultaneous control of up to 4 motors
 - **Simple API**: Straightforward initialization and control functions
 
@@ -34,7 +34,7 @@ You must send DSHOT signals continuously to your ESC at a consistent rate. Failu
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
     if (htim == &htim16) {
         if (esc_ready) {
-            ESC_EngineSetSpeedForAll();  // Normal operation
+            ESC_EngineSetSpeedForAll(Throttle_all, 0);  // Normal operation
         } else {
             ESC_SetFlagForInit();         // Initialization sequence
         }
@@ -44,13 +44,6 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 
 **Important**: Keep the timer frequency consistent with the initialization rate (8kHz in this example).
 
-### Throttle Control
-
-Set motor speeds using `ESC_EngineUpdateDMABuff()`:
-```c
-ESC_EngineUpdateDMABuff(throttle_value, telemetry_bit);
-```
-
 ### Telemetry (Optional)
 
 To receive telemetry feedback from your ESC:
@@ -58,7 +51,15 @@ To receive telemetry feedback from your ESC:
 1. Connect the ESC telemetry pin to your microcontroller's UART RX pin
 2. Set the telemetry bit to 1 when sending commands:
    ```c
-   ESC_EngineUpdateDMABuff(throttle_value, 1);  // Request telemetry
+   void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
+        if (htim == &htim16) {
+            if (esc_ready) {
+                ESC_EngineSetSpeedForAll(Throttle_all, 1);  // Request telemetry
+            } else {
+                ESC_SetFlagForInit();         // Initialization sequence
+            }
+        }
+    }  
    ```
 3. Add a UART RX interrupt handler:
    ```c

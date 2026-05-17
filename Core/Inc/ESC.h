@@ -47,10 +47,8 @@ typedef struct {
 void ESC_Init (void);
 void ESC_SetFlagForInit (void);
 
-void ESC_EngineSetSpeedForAll (void);
+void ESC_EngineSetSpeedForAll (uint16_t *motor_speeds, uint8_t telemetry);
 
-void ESC_EngineUpdateDMABuff (uint16_t *motor_speeds, uint8_t telemetry);
 uint8_t ESC_TelemetryHandling (Event_t event);
 
 void ESC_DmaTxCallback (DMA_HandleTypeDef *hdma);
-

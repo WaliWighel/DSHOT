@@ -13,10 +13,10 @@ A high-performance, DMA-accelerated DSHOT motor control driver for STM32 microco
 
 ## Hardware Requirements
 
-- **STM32 MCU**: H7 Series (tested on STM32H7S3, but compatible with other H7 variants)
+- **STM32 MCU**: tested on STM32H7S3, but compatible with other
 - **Timer**: Timer for PWM signal generation on 4 channels
 - **Synchronization Timer**: Timer 16 (TIM16) running at 8kHz
-- **DMA Controller**: GPDMA1 for both PWM and UART transfers
+- **DMA Controller**: DMA for both PWM and UART transfers
 - **UART**: UART1 for telemetry reception (optional)
 
 ## Configuration

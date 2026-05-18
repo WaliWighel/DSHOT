@@ -11,6 +11,19 @@ A DMA-based DSHOT600 motor control driver for STM32 microcontrollers with DMA-ac
 
 ## Quick Start
 
+## configuration
+
+I use timer with 300MHz clk inpout, so i set it like this : 
+
+<img width="1526" height="1625" alt="image" src="https://github.com/user-attachments/assets/7a8f054a-823a-40da-a926-6e83cfed80ae" />
+
+Prescaler = 3 makes my timer tick at 100MHz, if your timer can't be clocked at 100MHz with counter  = 168, you will have to addjust :
+#define DSHOT600_TH1 	 (126U)
+#define DSHOT600_TH0 	 (63U)
+
+you have to make DSHOT600_TH1 to be 1,25us and DSHOT600_TH0 0.65us, +- 10% i guess. To make from it DSHOT1200 you will have to addjust your timer properlly. To make DSHOT300, you simply set clk division to 2, and nothin else, since this will
+make timer rune 2times slower. Same for DSHOT150, but instead for divisio = 2, here division = 4.
+
 ### Initialization
 
 Call `ESC_Init()` to initialize the ESC. This function:

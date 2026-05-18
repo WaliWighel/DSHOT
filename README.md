@@ -1,6 +1,6 @@
 # DSHOT600 Motor Control Driver
 
-A high-performance, DMA-accelerated DSHOT600 motor control driver for STM32 microcontrollers. Provides efficient, non-blocking PWM signal generation with optional bidirectional telemetry support for quadcopter ESCs.
+A high-performance, DMA-accelerated DSHOT motor control driver for STM32 microcontrollers. Provides efficient, non-blocking PWM signal generation with optional bidirectional telemetry support for quadcopter ESCs.
 
 ## Features
 
@@ -14,11 +14,10 @@ A high-performance, DMA-accelerated DSHOT600 motor control driver for STM32 micr
 ## Hardware Requirements
 
 - **STM32 MCU**: H7 Series (tested on STM32H7S3, but compatible with other H7 variants)
-- **Timer**: Timer 5 (TIM5) for PWM signal generation on 4 channels
+- **Timer**: Timer for PWM signal generation on 4 channels
 - **Synchronization Timer**: Timer 16 (TIM16) running at 8kHz
 - **DMA Controller**: GPDMA1 for both PWM and UART transfers
 - **UART**: UART1 for telemetry reception (optional)
-- **Clock**: 300 MHz system clock (prescaler: 3, timer tick: 100 MHz)
 
 ## Configuration
 
@@ -41,7 +40,7 @@ The driver requires TIM5 configured for PWM generation and TIM16 as a synchroniz
 >
 > For **DSHOT1200** (2x speed): Halve the timer period and duty cycle values
 >
-> For **DSHOT300** (4x slower) or **DSHOT150** (8x slower): Multiply period and duty values accordingly
+> For **DSHOT300** (2x slower) or **DSHOT150** (4x slower): Multiply period and duty values accordingly
 
 ### STM32CubeMX Configuration Example
 
@@ -51,7 +50,6 @@ TIM5:
   - Prescaler: 3 (for 100 MHz clock from 300 MHz input)
   - Counter Period: 168
   - Pulse (CCR): Any value (overridden by DMA)
-  - DMA Requests: CC1, CC2, CC3, CC4 enabled
 
 TIM16:
   - Mode: Timer (interrupt)
@@ -59,13 +57,17 @@ TIM16:
   - Counter Period: 1
   - Interrupt: Enabled
 
-GPDMA1:
+DMA:
   - 4 channels for TIM5 PWM DMA transfers
+<img width="1112" height="1545" alt="image" src="https://github.com/user-attachments/assets/34291e46-06fd-4100-8c12-923178d96bfc" />
+
   - 1 channel for UART1 RX (telemetry)
+<img width="1131" height="1629" alt="image" src="https://github.com/user-attachments/assets/a09c9f6d-3b8e-4933-8010-740acd79fd63" />
+
+
 
 UART1:
   - Baud: 115200
-  - DMA RX: Enabled
 ```
 
 ## API Reference

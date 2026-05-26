@@ -44,7 +44,7 @@ The driver requires TIM5 configured for PWM generation and TIM16 as a synchroniz
 
 ### STM32CubeMX Configuration Example
 
-```
+
 TIM5:
   - Mode: PWM Generation (CH1-4)
   - Prescaler: 3 (for 100 MHz clock from 300 MHz input)
@@ -69,7 +69,7 @@ DMA:
 
 UART1:
   - Baud: 115200
-```
+
 
 ## API Reference
 

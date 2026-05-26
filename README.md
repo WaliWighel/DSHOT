@@ -59,7 +59,8 @@ TIM16:
 
 DMA:
   - 4 channels for TIM5 PWM DMA transfers
-<img width="1112" height="1545" alt="image" src="https://github.com/user-attachments/assets/34291e46-06fd-4100-8c12-923178d96bfc" />
+<img width="1463" height="1533" alt="image" src="https://github.com/user-attachments/assets/c1a94513-072f-4d01-afd1-b3395babaf78" />
+
 
   - 1 channel for UART1 RX (telemetry)
 <img width="1131" height="1629" alt="image" src="https://github.com/user-attachments/assets/a09c9f6d-3b8e-4933-8010-740acd79fd63" />

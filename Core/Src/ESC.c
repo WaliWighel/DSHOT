@@ -153,7 +153,7 @@ uint8_t ESC_TelemetryHandling (Event_t event) {
  */
 void ESC_EngineSetSpeedForAll (uint16_t *motor_speeds, uint8_t telemetry) {
 	/* Local buffer isolating active transmissions from application race conditions */
-	RAM1 static uint16_t dma_buff[4][DSHOT_FULL_FRAME_SIZE];
+	RAM1 static uint8_t dma_buff[4][DSHOT_FULL_FRAME_SIZE];
 	uint8_t telemetry_bit[4] = {0};
 
 	/* Interrogate telemetry arbiter to check state viability */
@@ -192,10 +192,10 @@ void ESC_EngineSetSpeedForAll (uint16_t *motor_speeds, uint8_t telemetry) {
 	}
 
 	/* Launch parallel hardware DMA requests on TIM5 channels */
-	HAL_DMA_Start_IT((&htim5)->hdma[TIM_DMA_ID_CC1], (uint32_t)dma_buff[0], (uint32_t)&(&htim5)->Instance->CCR1, DSHOT_FULL_FRAME_SIZE * sizeof(uint16_t));
-	HAL_DMA_Start_IT((&htim5)->hdma[TIM_DMA_ID_CC2], (uint32_t)dma_buff[1], (uint32_t)&(&htim5)->Instance->CCR2, DSHOT_FULL_FRAME_SIZE * sizeof(uint16_t));
-	HAL_DMA_Start_IT((&htim5)->hdma[TIM_DMA_ID_CC3], (uint32_t)dma_buff[2], (uint32_t)&(&htim5)->Instance->CCR3, DSHOT_FULL_FRAME_SIZE * sizeof(uint16_t));
-	HAL_DMA_Start_IT((&htim5)->hdma[TIM_DMA_ID_CC4], (uint32_t)dma_buff[3], (uint32_t)&(&htim5)->Instance->CCR4, DSHOT_FULL_FRAME_SIZE * sizeof(uint16_t));
+	HAL_DMA_Start_IT((&htim5)->hdma[TIM_DMA_ID_CC1], (uint32_t)dma_buff[0], (uint32_t)&(&htim5)->Instance->CCR1, DSHOT_FULL_FRAME_SIZE * sizeof(uint8_t));
+	HAL_DMA_Start_IT((&htim5)->hdma[TIM_DMA_ID_CC2], (uint32_t)dma_buff[1], (uint32_t)&(&htim5)->Instance->CCR2, DSHOT_FULL_FRAME_SIZE * sizeof(uint8_t));
+	HAL_DMA_Start_IT((&htim5)->hdma[TIM_DMA_ID_CC3], (uint32_t)dma_buff[2], (uint32_t)&(&htim5)->Instance->CCR3, DSHOT_FULL_FRAME_SIZE * sizeof(uint8_t));
+	HAL_DMA_Start_IT((&htim5)->hdma[TIM_DMA_ID_CC4], (uint32_t)dma_buff[3], (uint32_t)&(&htim5)->Instance->CCR4, DSHOT_FULL_FRAME_SIZE * sizeof(uint8_t));
 
 	/* Commit DMA transfer requests to timer execution hardware registers */
 	__HAL_TIM_ENABLE_DMA(&htim5, TIM_DMA_CC1 | TIM_DMA_CC2 | TIM_DMA_CC3 | TIM_DMA_CC4);

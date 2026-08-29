@@ -59,7 +59,11 @@ typedef enum {
 
     EVENT_MESSAGE_RECIEVED,
 
-	EVENT_USART_RX
+    EVENT_USART_RX,
+
+    EVENT_I2C_RX_DONE,
+
+	EVENT_DATA_RECIEVED,
 } Event_t;
 /* USER CODE END EM */
 
@@ -74,6 +78,8 @@ void Error_Handler(void);
 
 /* USER CODE BEGIN Private defines */
 #define RAM1 __attribute__((section(".RAM_D1"), aligned(32)))
+
+#define powui(a,pow,out) 			for (uint16_t i = 0; i < pow; i++) {a *= a;} out = a;
 /* USER CODE END Private defines */
 
 #ifdef __cplusplus

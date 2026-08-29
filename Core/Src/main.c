@@ -47,9 +47,14 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-  uint16_t Throttle_all[4] = {0, 0, 0, 0};
+uint16_t Throttle_all[4] = {0, 0, 0, 0};
 
-  uint8_t esc_ready = 0;
+volatile uint8_t esc_ready = 0;
+
+volatile static uint32_t counter = 0;
+volatile float cpu_usage = 0;
+
+uint16_t stop = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -78,6 +83,11 @@ int main(void)
   /* MPU Configuration--------------------------------------------------------*/
   MPU_Config();
 
+  /* Enable the CPU Cache */
+
+  /* Enable I-Cache---------------------------------------------------------*/
+  SCB_EnableICache();
+
   /* MCU Configuration--------------------------------------------------------*/
 
   /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
@@ -101,18 +111,33 @@ int main(void)
   MX_SBS_Init();
   MX_TIM16_Init();
   MX_USART1_UART_Init();
+  MX_TIM17_Init();
+  MX_TIM14_Init();
   /* USER CODE BEGIN 2 */
 
-  ESC_Init();
+  ESC_Init(1);
   esc_ready = 1;
 
+  // 199 977 036
+  HAL_TIM_Base_Start_IT(&htim14);
+
+  int8_t dir = 1;
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-	  Throttle_all[0] += Throttle_all[0] > 1977 ? - 1976 : 1;
+	  if (stop) {
+		  Throttle_all[0] = stop - 1;
+		  Throttle_all[1] = Throttle_all[0];
+		  Throttle_all[2] = Throttle_all[0];
+		  Throttle_all[3] = Throttle_all[0];
+
+		  continue;
+	  }
+	  dir = Throttle_all[0] > 500 ? -1 : Throttle_all[0] < 100 ? 1 : dir;
+	  Throttle_all[0] += dir * 10;
 	  Throttle_all[1] = Throttle_all[0];
 	  Throttle_all[2] = Throttle_all[0];
 	  Throttle_all[3] = Throttle_all[0];
@@ -185,12 +210,25 @@ void SystemClock_Config(void)
 
 /* USER CODE BEGIN 4 */
 void HAL_TIM_PeriodElapsedCallback (TIM_HandleTypeDef *htim) {
+	/* every second */
+	if (htim == &htim14) {
+		static uint32_t old = 0;
+		uint32_t now = counter;
+
+		cpu_usage = (float)((uint32_t)(now - old) / 27977036.0f) * 100.0f;
+		old = counter;
+	}
+
 	if (htim == &htim16) {
 		if (esc_ready) {
 			ESC_EngineSetSpeedForAll(Throttle_all, 1);
 		} else {
 			ESC_SetFlagForInit();
 		}
+	}
+
+	if (htim == &htim17) {
+		ESC_BidirectionalTelemetryHandling(EVENT_DATA_RECIEVED);
 	}
 }
 

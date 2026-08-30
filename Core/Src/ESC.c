@@ -14,40 +14,47 @@
 #include "ESC.h"
 #include "string.h"
 #include "usart.h"
+#include "gpdma.h"
 
-/* Main ESC status structure containing telemetry data for all 4 motors */
+
+
 ESC_Status_t ESC;
 
-/* Synchronization flag used exclusively by TIM16 blocking loops during initialization */
 volatile uint8_t flag;
 volatile uint8_t bidirectional_mode;
 volatile ESC_Mode_t esc_mode;
 
+volatile uint8_t tim_cnt_stamp[4];
 
-extern DMA_HandleTypeDef handle_GPDMA1_Channel15;
-extern DMA_HandleTypeDef handle_GPDMA1_Channel14;
-extern DMA_HandleTypeDef handle_GPDMA1_Channel13;
-extern DMA_HandleTypeDef handle_GPDMA1_Channel12;
+/* DMA buffers */
+RAM1 static uint8_t tele_dma_buff[4][DTELE_FULL_FRAME_SIZE];
+RAM1 static uint8_t dshot_dma_buff[4][DSHOT_FULL_FRAME_SIZE];
 
+extern DMA_HandleTypeDef handle_GPDMA1_Channel3;
+extern DMA_HandleTypeDef handle_GPDMA1_Channel2;
+extern DMA_HandleTypeDef handle_GPDMA1_Channel1;
+extern DMA_HandleTypeDef handle_GPDMA1_Channel0;
+
+DMA_NodeTypeDef TxNode[4];
+DMA_NodeTypeDef	RxNode[4];
+DMA_QListTypeDef Queue[4];
+
+
+static void ESC_DMA_LinkedList_cfg (uint8_t ch, DMA_HandleTypeDef *hdma, uint32_t ccr_reg, uint32_t Request, uint8_t Bidirectional_mode);
+
+static void ESC_DMA_Conf (uint8_t Bidirectional_mode);
 
 static void ESC_SwitchToRXMode (void);
 static void ESC_SwitchToTXMode (void);
 
 // static void ESC_SendDshotCMD (uint16_t cmd);
-static void ESC_PrepareDSHOTFrame (uint16_t *values, uint8_t *telemetry_bit, uint8_t dma_buff[4][DSHOT_FULL_FRAME_SIZE]);
-static void ESC_SendSignalToESC (uint8_t dma_buff[4][DSHOT_FULL_FRAME_SIZE]);
+inline static void ESC_PrepareDSHOTFrame (uint16_t *values, uint8_t *telemetry_bit, uint8_t dma_buff[4][DSHOT_FULL_FRAME_SIZE]);
+inline static void ESC_SendSignalToESC (uint8_t dma_buff[4][DSHOT_FULL_FRAME_SIZE]);
 
 static void ESC_DmaTxCallback (DMA_HandleTypeDef *hdma);
-/**
- * @brief Initialize ESC hardware and run startup calibration sequence
- *
- * Sequence:
- * 1. Wait 4 seconds for the ESC hardware power rails to stabilize
- * 2. Link DMA completion callbacks on TIM5 to manage clean signal termination
- * 3. Arm PWM output generation across all 4 timer channels
- * 4. Activate the 8kHz synchronization timer (TIM16)
- * 5. Issue 40,000 zero-throttle synchronization pulses to complete ESC arming
- */
+
+
+
 void ESC_Init (uint8_t Bidirectional_mode) {
 	uint16_t motor_speeds[4] = {0};
 	bidirectional_mode = Bidirectional_mode;
@@ -68,15 +75,8 @@ void ESC_Init (uint8_t Bidirectional_mode) {
 		HAL_TIM_PWM_ConfigChannel(&htim5, &sConfigOC, TIM_CHANNEL_4);
 	}
 
-
-	/* Allow ESC power supply to stabilize */
-	// HAL_Delay(2000);
-
-	/* Register callbacks to clear duty cycle immediately following DMA transmission end */
-	(&htim5)->hdma[TIM_DMA_ID_CC1]->XferCpltCallback = ESC_DmaTxCallback;
-	(&htim5)->hdma[TIM_DMA_ID_CC2]->XferCpltCallback = ESC_DmaTxCallback;
-	(&htim5)->hdma[TIM_DMA_ID_CC3]->XferCpltCallback = ESC_DmaTxCallback;
-	(&htim5)->hdma[TIM_DMA_ID_CC4]->XferCpltCallback = ESC_DmaTxCallback;
+	/* Set DMA */
+	ESC_DMA_Conf(Bidirectional_mode);
 
 	/* Enable PWM generation on all motor channels */
 	HAL_TIM_PWM_Start(&htim5, TIM_CHANNEL_1);
@@ -97,59 +97,36 @@ void ESC_Init (uint8_t Bidirectional_mode) {
 	}
 }
 
-/**
- * @brief Handle the ESC asynchronous telemetry state machine
- *
- * State Machine Flow:
- * - EVENT_START_CYCLE: Evaluates whether a new UART DMA read window can be armed.
- * If ready, activates non-blocking UART DMA reception and returns the current target motor ID.
- * - EVENT_USART_RX: Triggered exclusively by the UART peripheral interrupt callback.
- * Parses the 10-byte data payload into physical metrics, shifts target focus to the next motor,
- * and frees the communication lock.
- * - Software Timeout: Rescues the interface if a packet drops, resetting state variables after 1000ms.
- *
- * @param event Determines whether to request/arm a new cycle or process an arrived data payload
- * @return uint8_t Target motor index (1 to 4) if a request is valid, 0 otherwise
- */
 uint8_t ESC_TelemetryHandling (Event_t event) {
-	/* Private RAM buffer dedicated to active UART DMA incoming streams */
 	RAM1 static uint8_t usart_dma_buff[TELEMETRY_PACKET_SIZE];
-
-	/* Tracks current motor target index [1-4] across iterations */
 	static uint8_t engine = 1;
-
-	/* Hardware interface lock: 1 = Idle/Ready, 0 = Active UART DMA transfer in progress */
 	static uint8_t ready_flag = 1;
-
-	/* Tracks background execution ticks for timeout safety checks */
 	static uint32_t last_time = 0;
 	uint32_t current_time = HAL_GetTick();
 
-	/* Safety Reset: Recover state machine if an ESC fails to reply within 1 second */
-	if ((current_time - last_time >= 1000) && ready_flag == 0) {
+	if ((current_time - last_time >= 100) && ready_flag == 0) {
+		HAL_UART_AbortReceive(&huart1);
 		ready_flag = 1;
-		ESC.tele[engine - 1].deb_i_to++;  /* Track dropped frame fault counter */
-		engine += (engine == 4) ? -3 : 1;  /* Safely rotate target engine window */
+		ESC.tele[engine - 1].deb_i_to++;
+		engine += (engine == 4) ? -3 : 1;
 	}
 
-	/* Fast-exit trap: Reject concurrent telemetry assertions if previous DMA is still busy */
 	if (ready_flag == 0 && event == EVENT_START_CYCLE) {
 		return 0;
 	}
 
-	/* Phase 1: Arm Non-blocking Reception Window */
 	if (ready_flag && event == EVENT_START_CYCLE) {
 		if (HAL_UART_Receive_DMA(&huart1, usart_dma_buff, TELEMETRY_PACKET_SIZE) != HAL_OK) {
+			HAL_UART_AbortReceive(&huart1);
 			ready_flag = 1;  /* Recover state lock if peripheral driver fails */
 			return 0;
 		}
 
 		last_time = current_time;
-		ready_flag = 0; /* Engage interface lock */
+		ready_flag = 0;
 		return engine;
 	}
 
-	/* Phase 2: Asynchronous Data Extraction (Triggered from UART IRQ context) */
 	if (event == EVENT_USART_RX) {
 		/* Parse raw telemetry packet fields */
 		ESC.tele[engine - 1].temperature = usart_dma_buff[0];
@@ -174,9 +151,8 @@ uint8_t ESC_TelemetryHandling (Event_t event) {
 	return 0;
 }
 
-
+// TODO clean up and optimize
 void ESC_BidirectionalTelemetryHandling (Event_t event) {
-	RAM1 static uint8_t dma_buff[4][DTELE_FULL_FRAME_SIZE];
 	static const int8_t gcr2bin[32] = {
 	    -1, -1, -1, -1, -1, -1, -1, -1,
 	    -1,  0x09, 0x0A, 0x0B, -1, 0x0D, 0x0E, 0x0F,
@@ -185,44 +161,68 @@ void ESC_BidirectionalTelemetryHandling (Event_t event) {
 	};
 
 	if (event == EVENT_START_CYCLE) {
-		HAL_DMA_Start_IT((&htim5)->hdma[TIM_DMA_ID_CC1], (uint32_t)&(&htim5)->Instance->CCR1, (uint32_t)dma_buff[0], DTELE_FULL_FRAME_SIZE * sizeof(uint8_t));
-		HAL_DMA_Start_IT((&htim5)->hdma[TIM_DMA_ID_CC2], (uint32_t)&(&htim5)->Instance->CCR2, (uint32_t)dma_buff[1], DTELE_FULL_FRAME_SIZE * sizeof(uint8_t));
-		HAL_DMA_Start_IT((&htim5)->hdma[TIM_DMA_ID_CC3], (uint32_t)&(&htim5)->Instance->CCR3, (uint32_t)dma_buff[2], DTELE_FULL_FRAME_SIZE * sizeof(uint8_t));
-		HAL_DMA_Start_IT((&htim5)->hdma[TIM_DMA_ID_CC4], (uint32_t)&(&htim5)->Instance->CCR4, (uint32_t)dma_buff[3], DTELE_FULL_FRAME_SIZE * sizeof(uint8_t));
-
- 		__HAL_TIM_ENABLE_DMA(&htim5, TIM_DMA_CC1 | TIM_DMA_CC2 | TIM_DMA_CC3 | TIM_DMA_CC4);
-
-		/* Timeout for rx */
-		HAL_TIM_Base_Start_IT(&htim17);
+		__HAL_TIM_ENABLE_DMA(&htim5, TIM_DMA_CC1 | TIM_DMA_CC2 | TIM_DMA_CC3 | TIM_DMA_CC4);
 	} else if (event == EVENT_DATA_RECIEVED) {
 		uint32_t received_frame[4] = {0};
 
 		HAL_TIM_Base_Stop_IT(&htim17);
 
-
 		uint8_t edges_cnt[4];
-		edges_cnt[0] = DTELE_FULL_FRAME_SIZE - __HAL_DMA_GET_COUNTER(&handle_GPDMA1_Channel15);
-		edges_cnt[1] = DTELE_FULL_FRAME_SIZE - __HAL_DMA_GET_COUNTER(&handle_GPDMA1_Channel14);
-		edges_cnt[2] = DTELE_FULL_FRAME_SIZE - __HAL_DMA_GET_COUNTER(&handle_GPDMA1_Channel13);
-		edges_cnt[3] = DTELE_FULL_FRAME_SIZE - __HAL_DMA_GET_COUNTER(&handle_GPDMA1_Channel12);
 
+		edges_cnt[0] = DTELE_FULL_FRAME_SIZE - __HAL_DMA_GET_COUNTER(&handle_GPDMA1_Channel0);
+		edges_cnt[1] = DTELE_FULL_FRAME_SIZE - __HAL_DMA_GET_COUNTER(&handle_GPDMA1_Channel1);
+		edges_cnt[2] = DTELE_FULL_FRAME_SIZE - __HAL_DMA_GET_COUNTER(&handle_GPDMA1_Channel2);
+		edges_cnt[3] = DTELE_FULL_FRAME_SIZE - __HAL_DMA_GET_COUNTER(&handle_GPDMA1_Channel3);
+
+		HAL_DMA_Abort(&handle_GPDMA1_Channel0);
+		HAL_DMA_Abort(&handle_GPDMA1_Channel1);
+		HAL_DMA_Abort(&handle_GPDMA1_Channel2);
+		HAL_DMA_Abort(&handle_GPDMA1_Channel3);
 
 		for (uint8_t i = 0; i < 4; i++) {
 			static uint64_t packets_cnt[4] = {0};
 			static uint64_t gcr_d_cnt[4] = {0};
 			static uint64_t crc_err_cnt[4] = {0};
+			static uint64_t bad_frame_cnt[4] = {0};
 			packets_cnt[i]++;
 
 			uint8_t bit_count = 0;
 			uint8_t current_level = 0;
-			uint8_t prev_capture = dma_buff[i][0];
+
+			/* + ~20us */
+			uint8_t first_expected_edge = (tim_cnt_stamp[i] + (DSHOT600_PERIOD * 12)) % (DTELE_RX_ARR + 1);
+			uint8_t first_edge = 0;
+			uint8_t error = 0;
+			/* valid data only after 30us from last dshot edge */
+			while ((int16_t)((int16_t)tele_dma_buff[i][first_edge] - (int16_t)first_expected_edge) < 0) {
+				first_edge++;
+				if (first_edge >= DTELE_FULL_FRAME_SIZE) {
+					error = 1;
+					break;
+				}
+			}
+
+			if (error) {
+				continue;
+			}
+
+			uint8_t prev_capture = tele_dma_buff[i][first_edge];
+			edges_cnt[i] -= first_edge;
+
+			/* No frame recieved */
+			if ((edges_cnt[i] == 0 || edges_cnt[i] > DTELE_FULL_FRAME_SIZE)) {
+				bad_frame_cnt[i]++;
+				ESC.tele[i].bi_bad_frame_ratio = (float)((float)bad_frame_cnt[i] / (float)packets_cnt[i]);
+
+				continue;
+			}
 
 			/* decode frame form dma buffer */
-			for (uint8_t j = 1; j < edges_cnt[i]; j++) {
-				int16_t raw_diff = (int16_t)dma_buff[i][j] - (int16_t)prev_capture;
-				uint8_t interval = (uint8_t)(((raw_diff % (TIM5->ARR + 1)) + (TIM5->ARR + 1)) % (TIM5->ARR + 1));
+			for (uint8_t j = first_edge + 1; j < edges_cnt[i] + first_edge; j++) {
+				int16_t raw_diff = (int16_t)tele_dma_buff[i][j] - (int16_t)prev_capture;
+				uint8_t interval = (uint8_t)(((raw_diff % (DTELE_RX_ARR + 1)) + (DTELE_RX_ARR + 1)) % (DTELE_RX_ARR + 1));
 
-				prev_capture = dma_buff[i][j];
+				prev_capture = tele_dma_buff[i][j];
 
 				uint8_t current_bit_count = (interval + 4) / (DSHOT600_PERIOD * 4 / 5);
 
@@ -285,36 +285,25 @@ void ESC_BidirectionalTelemetryHandling (Event_t event) {
 			uint32_t erpm = (period_us != 0) ? (60000000UL / period_us) : 0;
 
 			ESC.tele[i].bi_RPM = erpm / (ENGINE_POLES / 2);
+			/* Update error rates */
 			ESC.tele[i].bi_gcr_dec_err_ratio = (float)((float)gcr_d_cnt[i] / (float)packets_cnt[i]);
 			ESC.tele[i].bi_crc_err_ratio = (float)((float)crc_err_cnt[i] / (float)packets_cnt[i]);
+			ESC.tele[i].bi_bad_frame_ratio = (float)((float)bad_frame_cnt[i] / (float)packets_cnt[i]);
 		}
 		ESC_SwitchToTXMode();
 	}
 }
 
-/**
- * @brief Encode throttle metrics and trigger parallel DSHOT600 DMA transmissions
- *
- * DSHOT600 Protocol Standard:
- * - Encoding schema utilizes 16 unique pulse-width durations per frame.
- * - Bit 1 Logic: ~1.2µs High Duration (DSHOT600_TH1)
- * - Bit 0 Logic: ~0.6µs High Duration (DSHOT600_TH0)
- * - Bit Array Structure: [11 Throttle Bits] + [1 Telemetry Request Bit] + [4 Checksum Bits]
- *
- * @param motor_speeds Array containing raw motor speed indexes [0 to 2047]
- * @param telemetry Set to 1 to query telemetry metrics from the rotating engine pool
- */
+
+
 void ESC_EngineSetSpeedForAll (uint16_t *motor_speeds, uint8_t telemetry) {
-	/* Local buffer isolating active transmissions from application race conditions */
-	RAM1 static uint8_t dma_buff[4][DSHOT_FULL_FRAME_SIZE];
 	uint8_t telemetry_bit[4] = {0};
 	uint16_t tmp_speeds[4];
 
-	/* Interrogate telemetry arbiter to check state viability */
 	if (telemetry) {
 		uint8_t temp = ESC_TelemetryHandling(EVENT_START_CYCLE);
 		if (temp) {
-			telemetry_bit[temp - 1] = 0x01; /* Isolate TRB bit directly to target engine array slot */
+			telemetry_bit[temp - 1] = 0x01;
 		}
 	}
 
@@ -327,34 +316,27 @@ void ESC_EngineSetSpeedForAll (uint16_t *motor_speeds, uint8_t telemetry) {
 			tmp_speeds[j] = 0;
 		}
 	}
-
-	/* Process formatting arrays across all channels */
-	ESC_PrepareDSHOTFrame(tmp_speeds, telemetry_bit, dma_buff);
-
-	/* Launch parallel hardware DMA requests on TIM5 channels */
-	ESC_SendSignalToESC(dma_buff);
+	ESC_PrepareDSHOTFrame(tmp_speeds, telemetry_bit, dshot_dma_buff);
+	ESC_SendSignalToESC(dshot_dma_buff);
 }
 
+
+
 void ESC_SendCMDForAll (uint16_t cmd) {
-	/* Local buffer isolating active transmissions from application race conditions */
-	RAM1 static uint8_t dma_buff[4][DSHOT_FULL_FRAME_SIZE];
 	uint8_t telemetry_bit[4] = {0};
 	uint16_t values[4];
 
 	/* cap cmd */
 	cmd = cmd > 47 ? 47 : cmd;
-
 	memset(values, cmd, sizeof(values));
 
-	/* Process formatting arrays across all channels */
-	ESC_PrepareDSHOTFrame(values, telemetry_bit, dma_buff);
-
-	/* Launch parallel hardware DMA requests on TIM5 channels */
-	ESC_SendSignalToESC(dma_buff);
+	ESC_PrepareDSHOTFrame(values, telemetry_bit, dshot_dma_buff);
+	ESC_SendSignalToESC(dshot_dma_buff);
 }
 
-// prepare
-static void ESC_PrepareDSHOTFrame (uint16_t *values, uint8_t *telemetry_bit, uint8_t dma_buff[4][DSHOT_FULL_FRAME_SIZE]) {
+
+// TODO posible optimalizatiton, do not calculate every frame, read it from previosly calcualted one
+inline static void ESC_PrepareDSHOTFrame (uint16_t *values, uint8_t *telemetry_bit, uint8_t dma_buff[4][DSHOT_FULL_FRAME_SIZE]) {
 	for (uint8_t j = 0; j < 4; j++) {
 		/* Combine components: Frame = [Throttle (11-bits)] + [dma_buff[i][j]TRB (1-bit)] */
 		uint16_t value = ((values[j] << 1) | (telemetry_bit[j] & 0x01));
@@ -365,7 +347,6 @@ static void ESC_PrepareDSHOTFrame (uint16_t *values, uint8_t *telemetry_bit, uin
 		crc &= 0x0F;
 
 		uint16_t frame = (value << 4) | crc;
-
 		/* Map the logical frame bitmask onto discrete timer duty cycle values */
 		for (uint8_t i = 0; i < DSHOT_FRAME_SIZE; i++) {
 			if (frame & (0x8000 >> i)) {
@@ -374,37 +355,23 @@ static void ESC_PrepareDSHOTFrame (uint16_t *values, uint8_t *telemetry_bit, uin
 				dma_buff[j][i] = DSHOT600_TH0;
 			}
 		}
-
 		memset((&dma_buff[j][16]), 0, (DSHOT_FULL_FRAME_SIZE - DSHOT_FRAME_SIZE));
 	}
 }
 
-static void ESC_SendSignalToESC (uint8_t dma_buff[4][DSHOT_FULL_FRAME_SIZE]) {
-	HAL_DMA_Start_IT((&htim5)->hdma[TIM_DMA_ID_CC1], (uint32_t)dma_buff[0], (uint32_t)&(&htim5)->Instance->CCR1, DSHOT_FULL_FRAME_SIZE * sizeof(uint8_t));
-	HAL_DMA_Start_IT((&htim5)->hdma[TIM_DMA_ID_CC2], (uint32_t)dma_buff[1], (uint32_t)&(&htim5)->Instance->CCR2, DSHOT_FULL_FRAME_SIZE * sizeof(uint8_t));
-	HAL_DMA_Start_IT((&htim5)->hdma[TIM_DMA_ID_CC3], (uint32_t)dma_buff[2], (uint32_t)&(&htim5)->Instance->CCR3, DSHOT_FULL_FRAME_SIZE * sizeof(uint8_t));
-	HAL_DMA_Start_IT((&htim5)->hdma[TIM_DMA_ID_CC4], (uint32_t)dma_buff[3], (uint32_t)&(&htim5)->Instance->CCR4, DSHOT_FULL_FRAME_SIZE * sizeof(uint8_t));
+inline static void ESC_SendSignalToESC (uint8_t dma_buff[4][DSHOT_FULL_FRAME_SIZE]) {
+	HAL_DMAEx_List_Start_IT(&handle_GPDMA1_Channel0);
+	HAL_DMAEx_List_Start_IT(&handle_GPDMA1_Channel1);
+	HAL_DMAEx_List_Start_IT(&handle_GPDMA1_Channel2);
+	HAL_DMAEx_List_Start_IT(&handle_GPDMA1_Channel3);
 
-	/* Commit DMA transfer requests to timer execution hardware registers */
 	__HAL_TIM_ENABLE_DMA(&htim5, TIM_DMA_CC1 | TIM_DMA_CC2 | TIM_DMA_CC3 | TIM_DMA_CC4);
 }
 
-/**
- * @brief Asserts state flag (Invoked directly from TIM16 Period Elapsed ISR)
- */
-void ESC_SetFlagForInit (void) {
+inline void ESC_SetFlagForInit (void) {
 	flag = 1;
 }
 
-/**
- * @brief DMA transfer completion interrupt vector callback
- *
- * Invoked immediately as individual timer channel transmissions finish. Disables
- * the active DMA block channel and zeroes out comparing configurations to enforce clean
- * logic ground-state line terminations before subsequent cycle starts.
- *
- * @param hdma Handle reference targeting active finishing DMA stream
- */
 static void ESC_DmaTxCallback (DMA_HandleTypeDef *hdma) {
 	static uint8_t DMA_finished = 0;
 
@@ -413,42 +380,35 @@ static void ESC_DmaTxCallback (DMA_HandleTypeDef *hdma) {
 		return;
 	}
 
-	/* Set 0 (idle state for dshot) on line (esc has pull up resistor) */
-	if (hdma == (&htim5)->hdma[TIM_DMA_ID_CC1]) {
-		__HAL_TIM_DISABLE_DMA((&htim5), TIM_DMA_CC1);
-
-		DMA_finished |= 1U;
-
-		if (!bidirectional_mode) {
-			__HAL_TIM_SET_COMPARE(&htim5, TIM_CHANNEL_1, 0);
-		}
-	} else if (hdma == (&htim5)->hdma[TIM_DMA_ID_CC2]) {
-		__HAL_TIM_DISABLE_DMA((&htim5), TIM_DMA_CC2);
-
-		DMA_finished |= (1U << 1);
-
-		if (!bidirectional_mode) {
-			__HAL_TIM_SET_COMPARE(&htim5, TIM_CHANNEL_2, 0);
-		}
-	} else if(hdma == (&htim5)->hdma[TIM_DMA_ID_CC3]) {
-		__HAL_TIM_DISABLE_DMA((&htim5), TIM_DMA_CC3);
-
-		DMA_finished |= (1U << 2);
-
-		if (!bidirectional_mode) {
-			__HAL_TIM_SET_COMPARE(&htim5, TIM_CHANNEL_3, 0);
-		}
-	} else if(hdma == (&htim5)->hdma[TIM_DMA_ID_CC4]) {
-		__HAL_TIM_DISABLE_DMA((&htim5), TIM_DMA_CC4);
-
-		DMA_finished |= (1U << 3);
-
-		if (!bidirectional_mode) {
-			__HAL_TIM_SET_COMPARE(&htim5, TIM_CHANNEL_4, 0);
-		}
-	}
-
-
+	if (hdma == &handle_GPDMA1_Channel0) {
+			DMA_finished |= 1U;
+			tim_cnt_stamp[0] = TIM5->CNT;
+			if (!bidirectional_mode) {
+				__HAL_TIM_DISABLE_DMA((&htim5), TIM_DMA_CC1);
+				__HAL_TIM_SET_COMPARE(&htim5, TIM_CHANNEL_1, 0);
+			}
+	    } else if (hdma == &handle_GPDMA1_Channel1) {
+	        DMA_finished |= (1U << 1);
+	        tim_cnt_stamp[1] = TIM5->CNT;
+			if (!bidirectional_mode) {
+				__HAL_TIM_DISABLE_DMA(&htim5, TIM_DMA_CC2);
+				__HAL_TIM_SET_COMPARE(&htim5, TIM_CHANNEL_2, 0);
+			}
+	    } else if (hdma == &handle_GPDMA1_Channel2) {
+	        DMA_finished |= (1U << 2);
+	        tim_cnt_stamp[2] = TIM5->CNT;
+			if (!bidirectional_mode) {
+				__HAL_TIM_DISABLE_DMA(&htim5, TIM_DMA_CC3);
+				__HAL_TIM_SET_COMPARE(&htim5, TIM_CHANNEL_3, 0);
+			}
+	    } else if (hdma == &handle_GPDMA1_Channel3) {
+	        DMA_finished |= (1U << 3);
+	        tim_cnt_stamp[3] = TIM5->CNT;
+			if (!bidirectional_mode) {
+				__HAL_TIM_DISABLE_DMA(&htim5, TIM_DMA_CC4);
+				__HAL_TIM_SET_COMPARE(&htim5, TIM_CHANNEL_4, 0);
+			}
+	    }
 
 	if (DMA_finished != 0x0F || !bidirectional_mode) {
 		return;
@@ -456,58 +416,37 @@ static void ESC_DmaTxCallback (DMA_HandleTypeDef *hdma) {
 
 	/* all channels finished */
 	DMA_finished = 0;
-
 	ESC_SwitchToRXMode();
 }
 
 static void ESC_SwitchToRXMode (void) {
 	TIM_IC_InitTypeDef sConfigIC = {0};
-
 	esc_mode = ESC_Rx_mode;
+
+	/* Timeout for rx, 80us */
+	HAL_TIM_Base_Start_IT(&htim17);
 
 	sConfigIC.ICPolarity = TIM_INPUTCHANNELPOLARITY_BOTHEDGE;
 	sConfigIC.ICSelection = TIM_ICSELECTION_DIRECTTI;
 	sConfigIC.ICPrescaler = TIM_ICPSC_DIV1;
 	sConfigIC.ICFilter = 0x00;
 
-	TIM5->ARR = 254;
-	// TODO dma linked list mode
+	TIM5->ARR = DTELE_RX_ARR;
 
 	HAL_TIM_IC_ConfigChannel(&htim5, &sConfigIC, TIM_CHANNEL_1);
 	HAL_TIM_IC_ConfigChannel(&htim5, &sConfigIC, TIM_CHANNEL_2);
 	HAL_TIM_IC_ConfigChannel(&htim5, &sConfigIC, TIM_CHANNEL_3);
 	HAL_TIM_IC_ConfigChannel(&htim5, &sConfigIC, TIM_CHANNEL_4);
 
-	/* Set dma channels */
-	handle_GPDMA1_Channel15.Init.Direction = DMA_PERIPH_TO_MEMORY;
-	handle_GPDMA1_Channel15.Init.SrcInc = DMA_SINC_FIXED;
-	handle_GPDMA1_Channel15.Init.DestInc = DMA_DINC_INCREMENTED;
-
-	handle_GPDMA1_Channel14.Init.Direction = DMA_PERIPH_TO_MEMORY;
-	handle_GPDMA1_Channel14.Init.SrcInc = DMA_SINC_FIXED;
-	handle_GPDMA1_Channel14.Init.DestInc = DMA_DINC_INCREMENTED;
-
-	handle_GPDMA1_Channel13.Init.Direction = DMA_PERIPH_TO_MEMORY;
-	handle_GPDMA1_Channel13.Init.SrcInc = DMA_SINC_FIXED;
-	handle_GPDMA1_Channel13.Init.DestInc = DMA_DINC_INCREMENTED;
-
-	handle_GPDMA1_Channel12.Init.Direction = DMA_PERIPH_TO_MEMORY;
-	handle_GPDMA1_Channel12.Init.SrcInc = DMA_SINC_FIXED;
-	handle_GPDMA1_Channel12.Init.DestInc = DMA_DINC_INCREMENTED;
-
-	HAL_DMA_Init(&handle_GPDMA1_Channel15);
-	HAL_DMA_Init(&handle_GPDMA1_Channel14);
-	HAL_DMA_Init(&handle_GPDMA1_Channel13);
-	HAL_DMA_Init(&handle_GPDMA1_Channel12);
-
 	ESC_BidirectionalTelemetryHandling(EVENT_START_CYCLE);
 }
 
 /* Only used in bidirectional_mode, so polarity always is low here */
 static void ESC_SwitchToTXMode (void) {
-	/* Set timer channels */
 	TIM_OC_InitTypeDef sConfigOC = {0};
 	esc_mode = ESC_Tx_mode;
+
+	__HAL_TIM_DISABLE_DMA(&htim5, TIM_DMA_CC1 | TIM_DMA_CC2 | TIM_DMA_CC3 | TIM_DMA_CC4);
 
 	TIM5->ARR = DSHOT600_PERIOD - 1;
 	TIM5->CNT = 0;
@@ -521,36 +460,63 @@ static void ESC_SwitchToTXMode (void) {
 	HAL_TIM_PWM_ConfigChannel(&htim5, &sConfigOC, TIM_CHANNEL_2);
 	HAL_TIM_PWM_ConfigChannel(&htim5, &sConfigOC, TIM_CHANNEL_3);
 	HAL_TIM_PWM_ConfigChannel(&htim5, &sConfigOC, TIM_CHANNEL_4);
+}
 
-	HAL_TIM_PWM_Start(&htim5, TIM_CHANNEL_1);
-	HAL_TIM_PWM_Start(&htim5, TIM_CHANNEL_2);
-	HAL_TIM_PWM_Start(&htim5, TIM_CHANNEL_3);
-	HAL_TIM_PWM_Start(&htim5, TIM_CHANNEL_4);
+static void ESC_DMA_Conf (uint8_t Bidirectional_mode) {
+	ESC_DMA_LinkedList_cfg(0, &handle_GPDMA1_Channel0, (uint32_t)&TIM5->CCR1, GPDMA1_REQUEST_TIM5_CH1, Bidirectional_mode);
+	ESC_DMA_LinkedList_cfg(1, &handle_GPDMA1_Channel1, (uint32_t)&TIM5->CCR2, GPDMA1_REQUEST_TIM5_CH2, Bidirectional_mode);
+	ESC_DMA_LinkedList_cfg(2, &handle_GPDMA1_Channel2, (uint32_t)&TIM5->CCR3, GPDMA1_REQUEST_TIM5_CH3, Bidirectional_mode);
+	ESC_DMA_LinkedList_cfg(3, &handle_GPDMA1_Channel3, (uint32_t)&TIM5->CCR4, GPDMA1_REQUEST_TIM5_CH4, Bidirectional_mode);
 
-	__HAL_TIM_DISABLE_DMA((&htim5), TIM_DMA_CC1);
-	__HAL_TIM_DISABLE_DMA((&htim5), TIM_DMA_CC2);
-	__HAL_TIM_DISABLE_DMA((&htim5), TIM_DMA_CC3);
-	__HAL_TIM_DISABLE_DMA((&htim5), TIM_DMA_CC4);
+	HAL_DMAEx_List_LinkQ(&handle_GPDMA1_Channel0, &Queue[0]);
+	HAL_DMAEx_List_LinkQ(&handle_GPDMA1_Channel1, &Queue[1]);
+	HAL_DMAEx_List_LinkQ(&handle_GPDMA1_Channel2, &Queue[2]);
+	HAL_DMAEx_List_LinkQ(&handle_GPDMA1_Channel3, &Queue[3]);
 
-	/* Set dma channels */
-	handle_GPDMA1_Channel15.Init.Direction = DMA_MEMORY_TO_PERIPH;
-	handle_GPDMA1_Channel15.Init.SrcInc = DMA_SINC_INCREMENTED;
-	handle_GPDMA1_Channel15.Init.DestInc = DMA_DINC_FIXED;
+	HAL_DMA_RegisterCallback(&handle_GPDMA1_Channel0, HAL_DMA_XFER_CPLT_CB_ID, ESC_DmaTxCallback);
+	HAL_DMA_RegisterCallback(&handle_GPDMA1_Channel1, HAL_DMA_XFER_CPLT_CB_ID, ESC_DmaTxCallback);
+	HAL_DMA_RegisterCallback(&handle_GPDMA1_Channel2, HAL_DMA_XFER_CPLT_CB_ID, ESC_DmaTxCallback);
+	HAL_DMA_RegisterCallback(&handle_GPDMA1_Channel3, HAL_DMA_XFER_CPLT_CB_ID, ESC_DmaTxCallback);
+}
 
-	handle_GPDMA1_Channel14.Init.Direction = DMA_MEMORY_TO_PERIPH;
-	handle_GPDMA1_Channel14.Init.SrcInc = DMA_SINC_INCREMENTED;
-	handle_GPDMA1_Channel14.Init.DestInc = DMA_DINC_FIXED;
+static void ESC_DMA_LinkedList_cfg (uint8_t ch, DMA_HandleTypeDef *hdma, uint32_t ccr_reg, uint32_t Request, uint8_t Bidirectional_mode) {
+	DMA_NodeConfTypeDef cfg = {0};
+	cfg.NodeType               = DMA_GPDMA_LINEAR_NODE;
+	cfg.Init.Request           = Request;
+	cfg.Init.BlkHWRequest      = DMA_BREQ_SINGLE_BURST;
+	cfg.Init.SrcDataWidth      = DMA_SRC_DATAWIDTH_BYTE;
+	cfg.Init.DestDataWidth     = DMA_DEST_DATAWIDTH_BYTE;
+	cfg.Init.SrcBurstLength    = 1;
+	cfg.Init.DestBurstLength   = 1;
+	cfg.Init.TransferEventMode = DMA_TCEM_BLOCK_TRANSFER;
+	cfg.Init.Mode              = DMA_NORMAL;
+	cfg.TriggerConfig.TriggerPolarity    = DMA_TRIG_POLARITY_MASKED;
+	cfg.DataHandlingConfig.DataExchange  = DMA_EXCHANGE_NONE;
+	cfg.DataHandlingConfig.DataAlignment = DMA_DATA_RIGHTALIGN_ZEROPADDED;
 
-	handle_GPDMA1_Channel13.Init.Direction = DMA_MEMORY_TO_PERIPH;
-	handle_GPDMA1_Channel13.Init.SrcInc = DMA_SINC_INCREMENTED;
-	handle_GPDMA1_Channel13.Init.DestInc = DMA_DINC_FIXED;
+	/* Config TX Node */
+	cfg.SrcAddress             = (uint32_t)dshot_dma_buff[ch];
+	cfg.DstAddress             = ccr_reg;
+	cfg.DataSize               = DSHOT_FULL_FRAME_SIZE * sizeof(uint8_t);
+	cfg.Init.Direction         = DMA_MEMORY_TO_PERIPH;
+	cfg.Init.SrcInc            = DMA_SINC_INCREMENTED;
+	cfg.Init.DestInc           = DMA_DINC_FIXED;
 
-	handle_GPDMA1_Channel12.Init.Direction = DMA_MEMORY_TO_PERIPH;
-	handle_GPDMA1_Channel12.Init.SrcInc = DMA_SINC_INCREMENTED;
-	handle_GPDMA1_Channel12.Init.DestInc = DMA_DINC_FIXED;
+	HAL_DMAEx_List_BuildNode(&cfg, &TxNode[ch]);
+	HAL_DMAEx_List_InsertNode_Tail(&Queue[ch], &TxNode[ch]);
 
-	HAL_DMA_Init(&handle_GPDMA1_Channel15);
-	HAL_DMA_Init(&handle_GPDMA1_Channel14);
-	HAL_DMA_Init(&handle_GPDMA1_Channel13);
-	HAL_DMA_Init(&handle_GPDMA1_Channel12);
+	if (!Bidirectional_mode) {
+		return;
+	}
+
+	/* Config RX Node */
+	cfg.SrcAddress             = ccr_reg;
+	cfg.DstAddress             = (uint32_t)tele_dma_buff[ch];
+	cfg.DataSize               = DTELE_FULL_FRAME_SIZE * sizeof(uint8_t);
+	cfg.Init.Direction         = DMA_PERIPH_TO_MEMORY;
+	cfg.Init.SrcInc            = DMA_SINC_FIXED;
+	cfg.Init.DestInc           = DMA_DINC_INCREMENTED;
+
+	HAL_DMAEx_List_BuildNode(&cfg, &RxNode[ch]);
+	HAL_DMAEx_List_InsertNode_Tail(&Queue[ch], &RxNode[ch]);
 }

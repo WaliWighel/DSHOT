@@ -23,11 +23,11 @@
 #define MAX_THROTTLE	 (2047U)
 
 typedef struct {
-	uint8_t bi_gcr_dec_err_ratio;
+	float bi_gcr_dec_err_ratio;
 
-	uint8_t bi_crc_err_ratio;
+	float bi_crc_err_ratio;
 
-	uint8_t bi_bad_frame_ratio;
+	float bi_bad_frame_ratio;
 
 	uint64_t packets_cnt;
 

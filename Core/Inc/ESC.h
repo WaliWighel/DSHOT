@@ -22,6 +22,24 @@
 /* DSHOT max value */
 #define MAX_THROTTLE	 (2047U)
 
+typedef struct {
+	uint8_t bi_gcr_dec_err_ratio;
+
+	uint8_t bi_crc_err_ratio;
+
+	uint8_t bi_bad_frame_ratio;
+
+	uint64_t packets_cnt;
+
+	uint64_t gcr_d_cnt;
+
+	uint64_t crc_err_cnt;
+
+	uint64_t bad_frame_cnt;
+
+	uint64_t deb_i_to;
+}ESC_Telemetry_errors_t;
+
 
 typedef struct {
 	/* temperature in [°C]*/
@@ -40,14 +58,9 @@ typedef struct {
 	uint16_t bi_RPM;
 	/* RPS is rotates per second */
 	uint16_t bi_RPS;
-
-	float bi_gcr_dec_err_ratio;
-
-	float bi_crc_err_ratio;
-
-	float bi_bad_frame_ratio;
 	/* number of timeout packets, for debug purposes */
-	uint64_t deb_i_to;
+
+	ESC_Telemetry_errors_t errors;
 } ESC_Telemetry_t;
 
 

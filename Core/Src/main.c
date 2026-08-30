@@ -51,7 +51,7 @@ uint16_t Throttle_all[4] = {0, 0, 0, 0};
 
 volatile uint8_t esc_ready = 0;
 
-uint16_t stop = 0;
+volatile uint16_t stop = 0;
 
 volatile uint32_t cycles = 0;
 volatile uint32_t start_cnt = 0;
@@ -116,16 +116,7 @@ int main(void)
   MX_TIM17_Init();
   MX_TIM14_Init();
   /* USER CODE BEGIN 2 */
-/*
- * CPU USAGE
- * -On - 5 %
- * -Ofast - 1.9%
- * -O2 - 2%
- * -O3 - 1.9%
- *
- * stage 1
- * -O3 - 1.52%
- */
+
   ESC_Init(1);
   esc_ready = 1;
 
@@ -232,6 +223,7 @@ void HAL_TIM_PeriodElapsedCallback (TIM_HandleTypeDef *htim) {
 
 	start_cnt = DWT->CYCCNT;
 	if (htim == &htim16) {
+		// 0.35 % cpu usage
 		if (esc_ready) {
 			ESC_EngineSetSpeedForAll(Throttle_all, 1);
 		} else {
@@ -240,6 +232,7 @@ void HAL_TIM_PeriodElapsedCallback (TIM_HandleTypeDef *htim) {
 	}
 
 	if (htim == &htim17) {
+		// 0.9 % cpu usage
 		ESC_BidirectionalTelemetryHandling(EVENT_DATA_RECIEVED);
 	}
 	cycles = DWT->CYCCNT - start_cnt;
@@ -249,6 +242,7 @@ void HAL_TIM_PeriodElapsedCallback (TIM_HandleTypeDef *htim) {
 void HAL_UART_RxCpltCallback (UART_HandleTypeDef *huart) {
 	start_cnt = DWT->CYCCNT;
 	if (huart == &huart1) {
+		// 0.06% cpu usage, NOTHING
 		ESC_TelemetryHandling(EVENT_USART_RX);
 	}
 	cycles = DWT->CYCCNT - start_cnt;

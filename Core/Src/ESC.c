@@ -17,6 +17,11 @@
 #include "gpdma.h"
 
 
+extern volatile uint32_t cycles;
+extern volatile uint32_t start_cnt;
+extern volatile uint64_t total_cycles;
+extern volatile float cpu_usage;
+
 
 ESC_Status_t ESC;
 
@@ -26,6 +31,7 @@ ESC_Mode_t esc_mode;
 
 volatile uint8_t tim_cnt_stamp[4];
 
+// TODO, if low on ram, save output of ESC_PrepareLookUpTable(), and make dshot_lookup_table const
 static uint8_t dshot_lookup_table[MAX_THROTTLE + 1][2][DSHOT_FULL_FRAME_SIZE];
 
 /* DMA buffers */
@@ -52,16 +58,16 @@ static void ESC_SwitchToRXMode (void);
 static void ESC_SwitchToTXMode (void);
 
 // static void ESC_SendDshotCMD (uint16_t cmd);
-inline static void ESC_PrepareDSHOTFrame (uint16_t *values, uint8_t *telemetry_bit, uint8_t dma_buff[4][DSHOT_FULL_FRAME_SIZE]);
-inline static void ESC_SendSignalToESC (uint8_t dma_buff[4][DSHOT_FULL_FRAME_SIZE]);
+static void ESC_PrepareDSHOTFrame (uint16_t *values, uint8_t *telemetry_bit, uint8_t dma_buff[4][DSHOT_FULL_FRAME_SIZE]);
+static void ESC_SendSignalToESC (uint8_t dma_buff[4][DSHOT_FULL_FRAME_SIZE]);
 
-inline static uint8_t Find_First_Edge (uint8_t *first_edge, uint8_t *edges_cnt, uint8_t i);
-inline static uint8_t Validate_Frame (uint8_t edges_cnt, uint8_t i);
-inline static void Build_Frame_From_Edges (uint32_t *received_frame, uint8_t first_edge, uint8_t edges_cnt, uint8_t i);
-inline static uint8_t GCR_Decode (uint16_t *tele_payload, uint32_t received_frame, uint8_t i);
-inline static uint8_t Check_for_CRC_error (uint16_t *payload, uint8_t i);
-inline static void Decode_RPM (uint16_t tele_payload, uint8_t i);
-inline static void Update_Error_Stats (uint8_t i);
+static uint8_t Find_First_Edge (uint8_t *first_edge, uint8_t *edges_cnt, uint8_t i);
+static uint8_t Validate_Frame (uint8_t edges_cnt, uint8_t i);
+static void Build_Frame_From_Edges (uint32_t *received_frame, uint8_t first_edge, uint8_t edges_cnt, uint8_t i);
+static uint8_t GCR_Decode (uint16_t *tele_payload, uint32_t received_frame, uint8_t i);
+static uint8_t Check_for_CRC_error (uint16_t *payload, uint8_t i);
+static void Decode_RPM (uint16_t tele_payload, uint8_t i);
+static void Update_Error_Stats (uint8_t i);
 
 static void ESC_DmaTxCallback (DMA_HandleTypeDef *hdma);
 
@@ -102,7 +108,8 @@ void ESC_Init (uint8_t Bidirectional_mode) {
 	HAL_TIM_Base_Start_IT(&htim16);
 
 	/* Send 40000 zero-throttle pulses for ESC arm (~5 seconds @ 8kHz) */
-	for (uint32_t i = 0; i < 5000; i ++) {
+	// TODO adjust for dshot update time
+	for (uint32_t i = 0; i < 5000 * 8; i ++) {
 		ESC_EngineSetSpeedForAll(motor_speeds, 0);
 
 		/* Synchronize iteration to the 8kHz tick from TIM16 IRQ */
@@ -118,7 +125,7 @@ uint8_t ESC_TelemetryHandling (Event_t event) {
 	static uint32_t last_time = 0;
 	uint32_t current_time = HAL_GetTick();
 
-	if ((current_time - last_time >= 100) && ready_flag == 0) {
+	if ((current_time - last_time >= 1000) && ready_flag == 0) {
 		HAL_UART_AbortReceive(&huart1);
 		ready_flag = 1;
 		ESC.tele[engine - 1].errors.deb_i_to++;
@@ -169,7 +176,8 @@ void ESC_BidirectionalTelemetryHandling (Event_t event) {
 	if (event == EVENT_START_CYCLE) {
 		__HAL_TIM_ENABLE_DMA(&htim5, TIM_DMA_CC1 | TIM_DMA_CC2 | TIM_DMA_CC3 | TIM_DMA_CC4);
 	} else if (event == EVENT_DATA_RECIEVED) {
-
+		// from here to HAL_DMA_Abort(&handle_GPDMA1_Channel3);
+		// 0.14 % cpu usage
 		HAL_TIM_Base_Stop_IT(&htim17);
 
 		uint8_t edges_cnt[4];
@@ -187,37 +195,45 @@ void ESC_BidirectionalTelemetryHandling (Event_t event) {
 		for (uint8_t i = 0; i < 4; i++) {
 			ESC.tele[i].errors.packets_cnt++;
 
+
+			// 0.11% cpu usage
 			uint8_t first_edge = 0;
 			if (Find_First_Edge(&first_edge, &edges_cnt[i], i)) {
 				continue;
 			}
+			// 0.01% cpu usage
 			if (Validate_Frame(edges_cnt[i], i)) {
 				continue;
 			}
 
+			// 0.3% cpu usage
 			uint32_t received_frame = 0;
 			Build_Frame_From_Edges(&received_frame, first_edge, edges_cnt[i], i);
 
+			// 0.07% cpu usage
 			uint16_t tele_payload = 0;
 			if (GCR_Decode(&tele_payload, received_frame, i)) {
 				continue;
 			}
+			// 0.01% cpu usage
 			if (Check_for_CRC_error(&tele_payload, i)) {
 				continue;
 			}
+			// 0.06% cpu usage
 			Decode_RPM(tele_payload, i);
 
 			/* Update only once per 1000 packets */
 			if ((ESC.tele[i].errors.packets_cnt % 1000) != 0) {
 				continue;
 			}
+			// ~0% cpu usage
 			Update_Error_Stats(i);
 		}
 		ESC_SwitchToTXMode();
 	}
 }
 
-inline static uint8_t Find_First_Edge (uint8_t *first_edge, uint8_t *edges_cnt, uint8_t i) {
+static uint8_t Find_First_Edge (uint8_t *first_edge, uint8_t *edges_cnt, uint8_t i) {
 	uint8_t first_expected_edge = (tim_cnt_stamp[i] + (DSHOT600_PERIOD * 12)) % (DTELE_RX_ARR + 1);
 
 	/* valid data only after 30us from last dshot edge */
@@ -233,17 +249,17 @@ inline static uint8_t Find_First_Edge (uint8_t *first_edge, uint8_t *edges_cnt, 
 	return 0;
 }
 
-inline static uint8_t Validate_Frame (uint8_t edges_cnt, uint8_t i) {
+static uint8_t Validate_Frame (uint8_t edges_cnt, uint8_t i) {
 	if ((edges_cnt == 0 || edges_cnt > DTELE_FULL_FRAME_SIZE)) {
 		ESC.tele[i].errors.bad_frame_cnt++;
-		ESC.tele[i].errors.bi_bad_frame_ratio = (uint8_t)((ESC.tele[i].errors.bad_frame_cnt / ESC.tele[i].errors.packets_cnt) * 100);
+		ESC.tele[i].errors.bi_bad_frame_ratio = (float)(((float)ESC.tele[i].errors.bad_frame_cnt / (float)ESC.tele[i].errors.packets_cnt));
 
 		return 1;
 	}
 	return 0;
 }
 
-inline static void Build_Frame_From_Edges (uint32_t *received_frame, uint8_t first_edge, uint8_t edges_cnt, uint8_t i) {
+static void Build_Frame_From_Edges (uint32_t *received_frame, uint8_t first_edge, uint8_t edges_cnt, uint8_t i) {
 	uint8_t bit_count = 0;
 	uint8_t current_level = 0;
 
@@ -251,17 +267,14 @@ inline static void Build_Frame_From_Edges (uint32_t *received_frame, uint8_t fir
 
 	for (uint8_t j = first_edge + 1; j < edges_cnt + first_edge; j++) {
 		int16_t raw_diff = (int16_t)tele_dma_buff[i][j] - (int16_t)prev_capture;
-		// TODO optimize interval?
-		uint8_t interval = (uint8_t)(((raw_diff % (DTELE_RX_ARR + 1)) + (DTELE_RX_ARR + 1)) % (DTELE_RX_ARR + 1));
-
 		prev_capture = tele_dma_buff[i][j];
 
+		uint8_t interval = raw_diff < 0 ? (raw_diff + DTELE_RX_ARR + 1) : raw_diff;
 		uint8_t current_bit_count = (interval + 4) / (DSHOT600_PERIOD * 4 / 5);
 
+		*received_frame <<= current_bit_count;
 		if (current_level) {
-			for (uint8_t n = 0; n < current_bit_count; n++) {
-				*received_frame |= (1U << (DTELE_FULL_FRAME_SIZE - 1 - n - bit_count));
-			}
+			*received_frame |= (1U << current_bit_count) - 1U;
 		}
 
 		bit_count += current_bit_count;
@@ -269,13 +282,15 @@ inline static void Build_Frame_From_Edges (uint32_t *received_frame, uint8_t fir
 	}
 
 	/* fill remaining uncaptured trailing bits at the LSB end */
-	while (bit_count < DTELE_FULL_FRAME_SIZE) {
-	    *received_frame |= (current_level << (DTELE_FULL_FRAME_SIZE - 1 - bit_count));
-	    bit_count++;
+	uint8_t dif = DTELE_FULL_FRAME_SIZE - bit_count;
+	if (!dif) {
+		return;
 	}
+	*received_frame <<= dif;
+	*received_frame |= (1U << dif) - 1U;
 }
 
-inline static uint8_t GCR_Decode (uint16_t *tele_payload, uint32_t received_frame, uint8_t i) {
+static uint8_t GCR_Decode (uint16_t *tele_payload, uint32_t received_frame, uint8_t i) {
 	static const int8_t gcr2bin[32] = {
 	    -1, -1, -1, -1, -1, -1, -1, -1,
 	    -1,  0x09, 0x0A, 0x0B, -1, 0x0D, 0x0E, 0x0F,
@@ -291,7 +306,7 @@ inline static uint8_t GCR_Decode (uint16_t *tele_payload, uint32_t received_fram
 
 		if (nibble == -1) {
 			ESC.tele[i].errors.gcr_d_cnt++;
-			ESC.tele[i].errors.bi_gcr_dec_err_ratio = (uint8_t)((ESC.tele[i].errors.gcr_d_cnt / ESC.tele[i].errors.packets_cnt) * 100);
+			ESC.tele[i].errors.bi_gcr_dec_err_ratio = (float)(((float)ESC.tele[i].errors.gcr_d_cnt / (float)ESC.tele[i].errors.packets_cnt));
 
 			return 1;
 		}
@@ -300,7 +315,7 @@ inline static uint8_t GCR_Decode (uint16_t *tele_payload, uint32_t received_fram
 	return 0;
 }
 
-inline static uint8_t Check_for_CRC_error (uint16_t *payload, uint8_t i) {
+static uint8_t Check_for_CRC_error (uint16_t *payload, uint8_t i) {
 	uint8_t crc_rx = (*payload & 0x000F);
 	*payload = (*payload >> 4);
 	uint32_t value_for_crc = (*payload & 0x0FFF);
@@ -308,14 +323,14 @@ inline static uint8_t Check_for_CRC_error (uint16_t *payload, uint8_t i) {
 
 	if (crc_rx != crc_expected) {
 		ESC.tele[i].errors.crc_err_cnt++;
-		ESC.tele[i].errors.bi_crc_err_ratio = (uint8_t)((ESC.tele[i].errors.crc_err_cnt / ESC.tele[i].errors.packets_cnt) * 100);
+		ESC.tele[i].errors.bi_crc_err_ratio = (float)(((float)ESC.tele[i].errors.crc_err_cnt / (float)ESC.tele[i].errors.packets_cnt));
 
 		return 1;
 	}
 	return 0;
 }
 
-inline static void Decode_RPM (uint16_t tele_payload, uint8_t i) {
+static void Decode_RPM (uint16_t tele_payload, uint8_t i) {
 	uint16_t period_base = ((tele_payload & 0x01FF));
 	uint8_t erpm_shift = ((tele_payload & 0x0E00) >> 9);
 	uint32_t period_us = ((uint32_t)period_base << erpm_shift);
@@ -324,16 +339,17 @@ inline static void Decode_RPM (uint16_t tele_payload, uint8_t i) {
 	ESC.tele[i].bi_RPM = erpm / (ENGINE_POLES / 2);
 }
 
-inline static void Update_Error_Stats (uint8_t i) {
-	ESC.tele[i].errors.bi_gcr_dec_err_ratio = (uint8_t)((ESC.tele[i].errors.gcr_d_cnt / ESC.tele[i].errors.packets_cnt) * 100);
-	ESC.tele[i].errors.bi_crc_err_ratio = (uint8_t)((ESC.tele[i].errors.crc_err_cnt / ESC.tele[i].errors.packets_cnt) * 100);
-	ESC.tele[i].errors.bi_bad_frame_ratio = (uint8_t)((ESC.tele[i].errors.bad_frame_cnt / ESC.tele[i].errors.packets_cnt) * 100);
+static void Update_Error_Stats (uint8_t i) {
+	ESC.tele[i].errors.bi_gcr_dec_err_ratio = (float)(((float)ESC.tele[i].errors.gcr_d_cnt / (float)ESC.tele[i].errors.packets_cnt));
+	ESC.tele[i].errors.bi_crc_err_ratio = (float)(((float)ESC.tele[i].errors.crc_err_cnt / (float)ESC.tele[i].errors.packets_cnt));
+	ESC.tele[i].errors.bi_bad_frame_ratio = (float)(((float)ESC.tele[i].errors.bad_frame_cnt / (float)ESC.tele[i].errors.packets_cnt));
 }
 
 void ESC_EngineSetSpeedForAll (uint16_t *motor_speeds, uint8_t telemetry) {
 	uint8_t telemetry_bit[4] = {0};
 	uint16_t tmp_speeds[4];
 
+	// 0.11%
 	if (telemetry) {
 		uint8_t temp = ESC_TelemetryHandling(EVENT_START_CYCLE);
 		if (temp) {
@@ -350,7 +366,9 @@ void ESC_EngineSetSpeedForAll (uint16_t *motor_speeds, uint8_t telemetry) {
 			tmp_speeds[j] = 0;
 		}
 	}
+	// 0.05%
 	ESC_PrepareDSHOTFrame(tmp_speeds, telemetry_bit, dshot_dma_buff);
+	// 0.15%
 	ESC_SendSignalToESC(dshot_dma_buff);
 }
 
@@ -368,7 +386,7 @@ void ESC_SendCMDForAll (uint16_t cmd) {
 	ESC_SendSignalToESC(dshot_dma_buff);
 }
 
-inline static void ESC_PrepareDSHOTFrame (uint16_t *values, uint8_t *telemetry_bit, uint8_t dma_buff[4][DSHOT_FULL_FRAME_SIZE]) {
+static void ESC_PrepareDSHOTFrame (uint16_t *values, uint8_t *telemetry_bit, uint8_t dma_buff[4][DSHOT_FULL_FRAME_SIZE]) {
 	for (uint8_t j = 0; j < 4; j++) {
 		memcpy(&dma_buff[j], &dshot_lookup_table[values[j]][telemetry_bit[j]], sizeof(dshot_lookup_table[values[j]][telemetry_bit[j]]));
 	}
@@ -397,7 +415,7 @@ static void ESC_PrepareLookUpTable (uint8_t look_up_table[MAX_THROTTLE + 1][2][D
 	}
 }
 
-inline static void ESC_SendSignalToESC (uint8_t dma_buff[4][DSHOT_FULL_FRAME_SIZE]) {
+static void ESC_SendSignalToESC (uint8_t dma_buff[4][DSHOT_FULL_FRAME_SIZE]) {
 	HAL_DMAEx_List_Start_IT(&handle_GPDMA1_Channel0);
 	HAL_DMAEx_List_Start_IT(&handle_GPDMA1_Channel1);
 	HAL_DMAEx_List_Start_IT(&handle_GPDMA1_Channel2);
@@ -406,7 +424,7 @@ inline static void ESC_SendSignalToESC (uint8_t dma_buff[4][DSHOT_FULL_FRAME_SIZ
 	__HAL_TIM_ENABLE_DMA(&htim5, TIM_DMA_CC1 | TIM_DMA_CC2 | TIM_DMA_CC3 | TIM_DMA_CC4);
 }
 
-inline void ESC_SetFlagForInit (void) {
+void ESC_SetFlagForInit (void) {
 	flag = 1;
 }
 
@@ -559,7 +577,7 @@ static void ESC_DMA_LinkedList_cfg (uint8_t ch, DMA_HandleTypeDef *hdma, uint32_
 	HAL_DMAEx_List_InsertNode_Tail(&Queue[ch], &RxNode[ch]);
 }
 
-inline static void ESC_OG_PrepareDSHOTFrame (uint16_t *values, uint8_t *telemetry_bit, uint8_t dma_buff[4][DSHOT_FULL_FRAME_SIZE]) {
+static void ESC_OG_PrepareDSHOTFrame (uint16_t *values, uint8_t *telemetry_bit, uint8_t dma_buff[4][DSHOT_FULL_FRAME_SIZE]) {
 	for (uint8_t j = 0; j < 4; j++) {
 		/* Combine components: Frame = [Throttle (11-bits)] + [dma_buff[i][j]TRB (1-bit)] */
 		uint16_t value = ((values[j] << 1) | (telemetry_bit[j] & 0x01));

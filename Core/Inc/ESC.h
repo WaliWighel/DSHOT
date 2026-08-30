@@ -1,11 +1,15 @@
 #define DSHOT_FRAME_SIZE 		(16)
-#define DSHOT_FULL_FRAME_SIZE   (18)
+#define DSHOT_FULL_FRAME_SIZE   (17)
 #define DTELE_FULL_FRAME_SIZE   (21)
 
-/* "times" */
+/* 1.67us */
 #define DSHOT600_PERIOD  (10U)
+/* 1.25us */
 #define DSHOT600_TH1 	 (6U)
+/* 0.625us */
 #define DSHOT600_TH0 	 (3U)
+
+#define DTELE_RX_ARR	 (254U)
 
 #define TELEMETRY_PACKET_SIZE	  (10U)
 #define ENGINE_POLES			  (14U)
@@ -40,6 +44,8 @@ typedef struct {
 	float bi_gcr_dec_err_ratio;
 
 	float bi_crc_err_ratio;
+
+	float bi_bad_frame_ratio;
 	/* number of timeout packets, for debug purposes */
 	uint64_t deb_i_to;
 } ESC_Telemetry_t;

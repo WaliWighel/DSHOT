@@ -28,10 +28,6 @@ TIM_HandleTypeDef htim5;
 TIM_HandleTypeDef htim14;
 TIM_HandleTypeDef htim16;
 TIM_HandleTypeDef htim17;
-DMA_HandleTypeDef handle_GPDMA1_Channel15;
-DMA_HandleTypeDef handle_GPDMA1_Channel14;
-DMA_HandleTypeDef handle_GPDMA1_Channel13;
-DMA_HandleTypeDef handle_GPDMA1_Channel12;
 
 /* TIM5 init function */
 void MX_TIM5_Init(void)
@@ -156,7 +152,7 @@ void MX_TIM17_Init(void)
   htim17.Instance = TIM17;
   htim17.Init.Prescaler = 0;
   htim17.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim17.Init.Period = 12000;
+  htim17.Init.Period = 23999;
   htim17.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim17.Init.RepetitionCounter = 0;
   htim17.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_ENABLE;
@@ -180,116 +176,6 @@ void HAL_TIM_PWM_MspInit(TIM_HandleTypeDef* tim_pwmHandle)
   /* USER CODE END TIM5_MspInit 0 */
     /* TIM5 clock enable */
     __HAL_RCC_TIM5_CLK_ENABLE();
-
-    /* TIM5 DMA Init */
-    /* GPDMA1_REQUEST_TIM5_CH1 Init */
-    handle_GPDMA1_Channel15.Instance = GPDMA1_Channel15;
-    handle_GPDMA1_Channel15.Init.Request = GPDMA1_REQUEST_TIM5_CH1;
-    handle_GPDMA1_Channel15.Init.BlkHWRequest = DMA_BREQ_SINGLE_BURST;
-    handle_GPDMA1_Channel15.Init.Direction = DMA_MEMORY_TO_PERIPH;
-    handle_GPDMA1_Channel15.Init.SrcInc = DMA_SINC_INCREMENTED;
-    handle_GPDMA1_Channel15.Init.DestInc = DMA_DINC_FIXED;
-    handle_GPDMA1_Channel15.Init.SrcDataWidth = DMA_SRC_DATAWIDTH_BYTE;
-    handle_GPDMA1_Channel15.Init.DestDataWidth = DMA_DEST_DATAWIDTH_BYTE;
-    handle_GPDMA1_Channel15.Init.Priority = DMA_HIGH_PRIORITY;
-    handle_GPDMA1_Channel15.Init.SrcBurstLength = 1;
-    handle_GPDMA1_Channel15.Init.DestBurstLength = 1;
-    handle_GPDMA1_Channel15.Init.TransferAllocatedPort = DMA_SRC_ALLOCATED_PORT0|DMA_DEST_ALLOCATED_PORT1;
-    handle_GPDMA1_Channel15.Init.TransferEventMode = DMA_TCEM_BLOCK_TRANSFER;
-    handle_GPDMA1_Channel15.Init.Mode = DMA_NORMAL;
-    if (HAL_DMA_Init(&handle_GPDMA1_Channel15) != HAL_OK)
-    {
-      Error_Handler();
-    }
-
-    __HAL_LINKDMA(tim_ocHandle, hdma[TIM_DMA_ID_CC1], handle_GPDMA1_Channel15);
-
-    if (HAL_DMA_ConfigChannelAttributes(&handle_GPDMA1_Channel15, DMA_CHANNEL_NPRIV) != HAL_OK)
-    {
-      Error_Handler();
-    }
-
-    /* GPDMA1_REQUEST_TIM5_CH2 Init */
-    handle_GPDMA1_Channel14.Instance = GPDMA1_Channel14;
-    handle_GPDMA1_Channel14.Init.Request = GPDMA1_REQUEST_TIM5_CH2;
-    handle_GPDMA1_Channel14.Init.BlkHWRequest = DMA_BREQ_SINGLE_BURST;
-    handle_GPDMA1_Channel14.Init.Direction = DMA_MEMORY_TO_PERIPH;
-    handle_GPDMA1_Channel14.Init.SrcInc = DMA_SINC_INCREMENTED;
-    handle_GPDMA1_Channel14.Init.DestInc = DMA_DINC_FIXED;
-    handle_GPDMA1_Channel14.Init.SrcDataWidth = DMA_SRC_DATAWIDTH_BYTE;
-    handle_GPDMA1_Channel14.Init.DestDataWidth = DMA_DEST_DATAWIDTH_BYTE;
-    handle_GPDMA1_Channel14.Init.Priority = DMA_HIGH_PRIORITY;
-    handle_GPDMA1_Channel14.Init.SrcBurstLength = 1;
-    handle_GPDMA1_Channel14.Init.DestBurstLength = 1;
-    handle_GPDMA1_Channel14.Init.TransferAllocatedPort = DMA_SRC_ALLOCATED_PORT0|DMA_DEST_ALLOCATED_PORT1;
-    handle_GPDMA1_Channel14.Init.TransferEventMode = DMA_TCEM_BLOCK_TRANSFER;
-    handle_GPDMA1_Channel14.Init.Mode = DMA_NORMAL;
-    if (HAL_DMA_Init(&handle_GPDMA1_Channel14) != HAL_OK)
-    {
-      Error_Handler();
-    }
-
-    __HAL_LINKDMA(tim_ocHandle, hdma[TIM_DMA_ID_CC2], handle_GPDMA1_Channel14);
-
-    if (HAL_DMA_ConfigChannelAttributes(&handle_GPDMA1_Channel14, DMA_CHANNEL_NPRIV) != HAL_OK)
-    {
-      Error_Handler();
-    }
-
-    /* GPDMA1_REQUEST_TIM5_CH3 Init */
-    handle_GPDMA1_Channel13.Instance = GPDMA1_Channel13;
-    handle_GPDMA1_Channel13.Init.Request = GPDMA1_REQUEST_TIM5_CH3;
-    handle_GPDMA1_Channel13.Init.BlkHWRequest = DMA_BREQ_SINGLE_BURST;
-    handle_GPDMA1_Channel13.Init.Direction = DMA_MEMORY_TO_PERIPH;
-    handle_GPDMA1_Channel13.Init.SrcInc = DMA_SINC_INCREMENTED;
-    handle_GPDMA1_Channel13.Init.DestInc = DMA_DINC_FIXED;
-    handle_GPDMA1_Channel13.Init.SrcDataWidth = DMA_SRC_DATAWIDTH_BYTE;
-    handle_GPDMA1_Channel13.Init.DestDataWidth = DMA_DEST_DATAWIDTH_BYTE;
-    handle_GPDMA1_Channel13.Init.Priority = DMA_HIGH_PRIORITY;
-    handle_GPDMA1_Channel13.Init.SrcBurstLength = 1;
-    handle_GPDMA1_Channel13.Init.DestBurstLength = 1;
-    handle_GPDMA1_Channel13.Init.TransferAllocatedPort = DMA_SRC_ALLOCATED_PORT0|DMA_DEST_ALLOCATED_PORT1;
-    handle_GPDMA1_Channel13.Init.TransferEventMode = DMA_TCEM_BLOCK_TRANSFER;
-    handle_GPDMA1_Channel13.Init.Mode = DMA_NORMAL;
-    if (HAL_DMA_Init(&handle_GPDMA1_Channel13) != HAL_OK)
-    {
-      Error_Handler();
-    }
-
-    __HAL_LINKDMA(tim_ocHandle, hdma[TIM_DMA_ID_CC3], handle_GPDMA1_Channel13);
-
-    if (HAL_DMA_ConfigChannelAttributes(&handle_GPDMA1_Channel13, DMA_CHANNEL_NPRIV) != HAL_OK)
-    {
-      Error_Handler();
-    }
-
-    /* GPDMA1_REQUEST_TIM5_CH4 Init */
-    handle_GPDMA1_Channel12.Instance = GPDMA1_Channel12;
-    handle_GPDMA1_Channel12.Init.Request = GPDMA1_REQUEST_TIM5_CH4;
-    handle_GPDMA1_Channel12.Init.BlkHWRequest = DMA_BREQ_SINGLE_BURST;
-    handle_GPDMA1_Channel12.Init.Direction = DMA_MEMORY_TO_PERIPH;
-    handle_GPDMA1_Channel12.Init.SrcInc = DMA_SINC_INCREMENTED;
-    handle_GPDMA1_Channel12.Init.DestInc = DMA_DINC_FIXED;
-    handle_GPDMA1_Channel12.Init.SrcDataWidth = DMA_SRC_DATAWIDTH_BYTE;
-    handle_GPDMA1_Channel12.Init.DestDataWidth = DMA_DEST_DATAWIDTH_BYTE;
-    handle_GPDMA1_Channel12.Init.Priority = DMA_HIGH_PRIORITY;
-    handle_GPDMA1_Channel12.Init.SrcBurstLength = 1;
-    handle_GPDMA1_Channel12.Init.DestBurstLength = 1;
-    handle_GPDMA1_Channel12.Init.TransferAllocatedPort = DMA_SRC_ALLOCATED_PORT0|DMA_DEST_ALLOCATED_PORT1;
-    handle_GPDMA1_Channel12.Init.TransferEventMode = DMA_TCEM_BLOCK_TRANSFER;
-    handle_GPDMA1_Channel12.Init.Mode = DMA_NORMAL;
-    if (HAL_DMA_Init(&handle_GPDMA1_Channel12) != HAL_OK)
-    {
-      Error_Handler();
-    }
-
-    __HAL_LINKDMA(tim_ocHandle, hdma[TIM_DMA_ID_CC4], handle_GPDMA1_Channel12);
-
-    if (HAL_DMA_ConfigChannelAttributes(&handle_GPDMA1_Channel12, DMA_CHANNEL_NPRIV) != HAL_OK)
-    {
-      Error_Handler();
-    }
-
   /* USER CODE BEGIN TIM5_MspInit 1 */
 
   /* USER CODE END TIM5_MspInit 1 */
@@ -308,7 +194,7 @@ void HAL_TIM_Base_MspInit(TIM_HandleTypeDef* tim_baseHandle)
     __HAL_RCC_TIM14_CLK_ENABLE();
 
     /* TIM14 interrupt Init */
-    HAL_NVIC_SetPriority(TIM14_IRQn, 14, 0);
+    HAL_NVIC_SetPriority(TIM14_IRQn, 0, 0);
     HAL_NVIC_EnableIRQ(TIM14_IRQn);
   /* USER CODE BEGIN TIM14_MspInit 1 */
 
@@ -386,12 +272,6 @@ void HAL_TIM_PWM_MspDeInit(TIM_HandleTypeDef* tim_pwmHandle)
   /* USER CODE END TIM5_MspDeInit 0 */
     /* Peripheral clock disable */
     __HAL_RCC_TIM5_CLK_DISABLE();
-
-    /* TIM5 DMA DeInit */
-    HAL_DMA_DeInit(tim_pwmHandle->hdma[TIM_DMA_ID_CC1]);
-    HAL_DMA_DeInit(tim_pwmHandle->hdma[TIM_DMA_ID_CC2]);
-    HAL_DMA_DeInit(tim_pwmHandle->hdma[TIM_DMA_ID_CC3]);
-    HAL_DMA_DeInit(tim_pwmHandle->hdma[TIM_DMA_ID_CC4]);
   /* USER CODE BEGIN TIM5_MspDeInit 1 */
 
   /* USER CODE END TIM5_MspDeInit 1 */

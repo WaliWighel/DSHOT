@@ -337,6 +337,10 @@ static void Decode_RPM (uint16_t tele_payload, uint8_t i) {
 	uint32_t erpm = (period_us != 0) ? (60000000UL / period_us) : 0;
 
 	ESC.tele[i].bi_RPM = erpm / (ENGINE_POLES / 2);
+	if (!ESC.tele[i].bi_RPM) {
+		return;
+	}
+	ESC.tele[i].bi_RPS = ESC.tele[i].bi_RPM / 60;
 }
 
 static void Update_Error_Stats (uint8_t i) {

@@ -32,19 +32,19 @@ ESC_Mode_t esc_mode;
 volatile uint8_t tim_cnt_stamp[4];
 
 // TODO, if low on ram, save output of ESC_PrepareLookUpTable(), and make dshot_lookup_table const
-static uint8_t dshot_lookup_table[MAX_THROTTLE + 1][2][DSHOT_FULL_FRAME_SIZE];
+RAM1 static uint8_t dshot_lookup_table[MAX_THROTTLE + 1][2][DSHOT_FULL_FRAME_SIZE];
 
 /* DMA buffers */
-RAM1 static uint8_t tele_dma_buff[4][DTELE_FULL_FRAME_SIZE];
-RAM1 static uint8_t dshot_dma_buff[4][DSHOT_FULL_FRAME_SIZE];
+NC_RAM static uint8_t tele_dma_buff[4][DTELE_FULL_FRAME_SIZE];
+NC_RAM static uint8_t dshot_dma_buff[4][DSHOT_FULL_FRAME_SIZE];
 
 extern DMA_HandleTypeDef handle_GPDMA1_Channel3;
 extern DMA_HandleTypeDef handle_GPDMA1_Channel2;
 extern DMA_HandleTypeDef handle_GPDMA1_Channel1;
 extern DMA_HandleTypeDef handle_GPDMA1_Channel0;
 
-DMA_NodeTypeDef TxNode[4];
-DMA_NodeTypeDef	RxNode[4];
+NC_RAM DMA_NodeTypeDef TxNode[4];
+NC_RAM DMA_NodeTypeDef	RxNode[4];
 DMA_QListTypeDef Queue[4];
 
 
@@ -109,7 +109,7 @@ void ESC_Init (uint8_t Bidirectional_mode) {
 
 	/* Send 40000 zero-throttle pulses for ESC arm (~5 seconds @ 8kHz) */
 	// TODO adjust for dshot update time
-	for (uint32_t i = 0; i < 5000 * 8; i ++) {
+	for (uint32_t i = 0; i < 5000; i ++) {
 		ESC_EngineSetSpeedForAll(motor_speeds, 0);
 
 		/* Synchronize iteration to the 8kHz tick from TIM16 IRQ */
@@ -119,7 +119,7 @@ void ESC_Init (uint8_t Bidirectional_mode) {
 }
 
 uint8_t ESC_TelemetryHandling (Event_t event) {
-	RAM1 static uint8_t usart_dma_buff[TELEMETRY_PACKET_SIZE];
+	NC_RAM static uint8_t usart_dma_buff[TELEMETRY_PACKET_SIZE];
 	static uint8_t engine = 1;
 	static uint8_t ready_flag = 1;
 	static uint32_t last_time = 0;

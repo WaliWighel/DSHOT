@@ -41,7 +41,7 @@
 
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
-// #define PWM_MODE
+
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
@@ -89,6 +89,9 @@ int main(void)
 
   /* Enable I-Cache---------------------------------------------------------*/
   SCB_EnableICache();
+
+  /* Enable D-Cache---------------------------------------------------------*/
+  SCB_EnableDCache();
 
   /* MCU Configuration--------------------------------------------------------*/
 
@@ -176,11 +179,13 @@ void SystemClock_Config(void)
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
   */
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
-  RCC_OscInitStruct.HSEState = RCC_HSE_BYPASS;
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
+  RCC_OscInitStruct.HSIState = RCC_HSI_ON;
+  RCC_OscInitStruct.HSIDiv = RCC_HSI_DIV1;
+  RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
   RCC_OscInitStruct.PLL1.PLLState = RCC_PLL_ON;
-  RCC_OscInitStruct.PLL1.PLLSource = RCC_PLLSOURCE_HSE;
-  RCC_OscInitStruct.PLL1.PLLM = 2;
+  RCC_OscInitStruct.PLL1.PLLSource = RCC_PLLSOURCE_HSI;
+  RCC_OscInitStruct.PLL1.PLLM = 4;
   RCC_OscInitStruct.PLL1.PLLN = 75;
   RCC_OscInitStruct.PLL1.PLLP = 2;
   RCC_OscInitStruct.PLL1.PLLQ = 2;
@@ -221,7 +226,7 @@ void HAL_TIM_PeriodElapsedCallback (TIM_HandleTypeDef *htim) {
 		total_cycles = 0;
 	}
 
-	start_cnt = DWT->CYCCNT;
+	//start_cnt = DWT->CYCCNT;
 	if (htim == &htim16) {
 		// 0.35 % cpu usage
 		if (esc_ready) {
@@ -235,18 +240,18 @@ void HAL_TIM_PeriodElapsedCallback (TIM_HandleTypeDef *htim) {
 		// 0.9 % cpu usage
 		ESC_BidirectionalTelemetryHandling(EVENT_DATA_RECIEVED);
 	}
-	cycles = DWT->CYCCNT - start_cnt;
-	total_cycles += cycles;
+//	cycles = DWT->CYCCNT - start_cnt;
+//	total_cycles += cycles;
 }
 
 void HAL_UART_RxCpltCallback (UART_HandleTypeDef *huart) {
-	start_cnt = DWT->CYCCNT;
+	//start_cnt = DWT->CYCCNT;
 	if (huart == &huart1) {
 		// 0.06% cpu usage, NOTHING
 		ESC_TelemetryHandling(EVENT_USART_RX);
 	}
-	cycles = DWT->CYCCNT - start_cnt;
-	total_cycles += cycles;
+//	cycles = DWT->CYCCNT - start_cnt;
+//	total_cycles += cycles;
 }
 
 /* USER CODE END 4 */
@@ -271,6 +276,20 @@ static void MPU_Config(void)
   MPU_InitStruct.AccessPermission = MPU_REGION_NO_ACCESS;
   MPU_InitStruct.DisableExec = MPU_INSTRUCTION_ACCESS_DISABLE;
   MPU_InitStruct.IsShareable = MPU_ACCESS_SHAREABLE;
+  MPU_InitStruct.IsCacheable = MPU_ACCESS_CACHEABLE;
+  MPU_InitStruct.IsBufferable = MPU_ACCESS_BUFFERABLE;
+
+  HAL_MPU_ConfigRegion(&MPU_InitStruct);
+
+  /** Initializes and configures the Region and the memory to be protected
+  */
+  MPU_InitStruct.Number = MPU_REGION_NUMBER1;
+  MPU_InitStruct.BaseAddress = 0x24071C00;
+  MPU_InitStruct.Size = MPU_REGION_SIZE_1KB;
+  MPU_InitStruct.SubRegionDisable = 0x0;
+  MPU_InitStruct.TypeExtField = MPU_TEX_LEVEL1;
+  MPU_InitStruct.AccessPermission = MPU_REGION_FULL_ACCESS;
+  MPU_InitStruct.IsShareable = MPU_ACCESS_NOT_SHAREABLE;
   MPU_InitStruct.IsCacheable = MPU_ACCESS_NOT_CACHEABLE;
   MPU_InitStruct.IsBufferable = MPU_ACCESS_NOT_BUFFERABLE;
 

@@ -178,13 +178,21 @@ SECTIONS
     __bss_end__ = _ebss;
   } >RAM
 
-  RW_NONCACHEABLE :
+  .noncacheable_buffer (NOLOAD):
   {
-    __NONCACHEABLEBUFFER_BEGIN = .;/* create symbol for start of section */
-    KEEP(*(noncacheable_buffer))
-    __NONCACHEABLEBUFFER_END = .;  /* create symbol for start of section */
+    __NONCACHEABLEBUFFER_BEGIN = .;
+    KEEP(*(.noncacheable_buffer))
+    KEEP(*(.noncacheable_buffer*))
+    __NONCACHEABLEBUFFER_END = .;
   } > RAM_NONCACHEABLEBUFFER
-
+  
+  .RAM (NOLOAD) :
+	{
+	  . = ALIGN(32);
+	  KEEP(*(.RAM))
+	  KEEP(*(.RAM.*))
+	  . = ALIGN(32);
+	} > RAM
   /* User_heap_stack section, used to check that there is enough Ram  type memory left */
   ._user_heap_stack :
   {

@@ -77,7 +77,8 @@ void Error_Handler(void);
 /* Private defines -----------------------------------------------------------*/
 
 /* USER CODE BEGIN Private defines */
-#define RAM1 __attribute__((section(".RAM_D1"), aligned(32)))
+#define RAM1 __attribute__((section(".RAM"), aligned(32)))
+#define NC_RAM __attribute__((section(".noncacheable_buffer")))
 
 #define powui(a,pow,out) 			for (uint16_t i = 0; i < pow; i++) {a *= a;} out = a;
 /* USER CODE END Private defines */
